@@ -15,6 +15,7 @@ import sys.io.Process;
 class StorageUtil
 {
 	#if sys
+
 	public static final rootDir:String = LimeSystem.applicationStorageDirectory;
 
 	public static function getStorageDirectory(?force:Bool = false):String
@@ -22,39 +23,64 @@ class StorageUtil
 		var daPath:String = '';
 
 		#if android
-		if (!FileSystem.exists(rootDir + 'storagetype.txt'))
-			File.saveContent(rootDir + 'storagetype.txt', ClientPrefs.data.storageType);
 
-		var curStorageType:String = File.getContent(rootDir + 'storagetype.txt').trim();
-		daPath = force ? StorageType.fromStrForce(curStorageType) : StorageType.fromStr(curStorageType);
+		if (!FileSystem.exists(rootDir + 'storagetype.txt'))
+			File.saveContent(
+				rootDir + 'storagetype.txt',
+				ClientPrefs.data.storageType
+			);
+
+		var curStorageType:String =
+			File.getContent(rootDir + 'storagetype.txt').trim();
+
+		daPath = force
+			? StorageType.fromStrForce(curStorageType)
+			: StorageType.fromStr(curStorageType);
+
 		daPath = Path.addTrailingSlash(daPath);
 
 		#elseif ios
+
 		daPath = LimeSystem.documentsDirectory;
 
 		#else
+
 		daPath = Sys.getCwd();
+
 		#end
 
 		return daPath;
 	}
 
-	public static function saveContent(fileName:String, fileData:String, ?alert:Bool = true):Void
+	public static function saveContent(
+		fileName:String,
+		fileData:String,
+		?alert:Bool = true
+	):Void
 	{
 		try
 		{
 			if (!FileSystem.exists('saves'))
 				FileSystem.createDirectory('saves');
 
-			File.saveContent('saves/$fileName', fileData);
+			File.saveContent(
+				'saves/$fileName',
+				fileData
+			);
 
 			if (alert)
-				CoolUtil.showPopUp('$fileName has been saved.', "Success!");
+				CoolUtil.showPopUp(
+					'$fileName has been saved.',
+					'Success!'
+				);
 		}
 		catch (e:Exception)
 		{
 			if (alert)
-				CoolUtil.showPopUp('$fileName couldn\'t be saved.\n(${e.message})', "Error!");
+				CoolUtil.showPopUp(
+					'$fileName couldn\'t be saved.\n(${e.message})',
+					'Error!'
+				);
 		}
 	}
 
@@ -62,23 +88,46 @@ class StorageUtil
 
 	public static function requestPermissions():Void
 	{
-		var mediaPermissions:Array<String> = AndroidVersion.SDK_INT >= AndroidVersionCode.TIRAMISU
-			? ['READ_MEDIA_IMAGES', 'READ_MEDIA_VIDEO', 'READ_MEDIA_AUDIO']
-			: ['READ_EXTERNAL_STORAGE', 'WRITE_EXTERNAL_STORAGE'];
+		var mediaPermissions:Array<String> =
+			AndroidVersion.SDK_INT >= AndroidVersionCode.TIRAMISU
+			? [
+				'READ_MEDIA_IMAGES',
+				'READ_MEDIA_VIDEO',
+				'READ_MEDIA_AUDIO'
+			]
+			: [
+				'READ_EXTERNAL_STORAGE',
+				'WRITE_EXTERNAL_STORAGE'
+			];
 
 		AndroidPermissions.requestPermissions(mediaPermissions);
 
 		if (!AndroidEnvironment.isExternalStorageManager())
 		{
 			if (AndroidVersion.SDK_INT >= AndroidVersionCode.S)
-				AndroidSettings.requestSetting('REQUEST_MANAGE_MEDIA');
+				AndroidSettings.requestSetting(
+					'REQUEST_MANAGE_MEDIA'
+				);
 
-			AndroidSettings.requestSetting('MANAGE_APP_ALL_FILES_ACCESS_PERMISSION');
+			AndroidSettings.requestSetting(
+				'MANAGE_APP_ALL_FILES_ACCESS_PERMISSION'
+			);
 		}
 
-		var hasCorePermission:Bool = AndroidVersion.SDK_INT >= AndroidVersionCode.TIRAMISU
-			? AndroidPermissions.getGrantedPermissions().contains('android.permission.READ_MEDIA_IMAGES')
-			: AndroidPermissions.getGrantedPermissions().contains('android.permission.READ_EXTERNAL_STORAGE');
+		var hasCorePermission:Bool =
+			AndroidVersion.SDK_INT >= AndroidVersionCode.TIRAMISU
+			?
+			AndroidPermissions
+				.getGrantedPermissions()
+				.contains(
+					'android.permission.READ_MEDIA_IMAGES'
+				)
+			:
+			AndroidPermissions
+				.getGrantedPermissions()
+				.contains(
+					'android.permission.READ_EXTERNAL_STORAGE'
+				);
 
 		if (!hasCorePermission)
 		{
@@ -92,10 +141,10 @@ class StorageUtil
 
 		try
 		{
-			var storageDir:String = StorageUtil.getStorageDirectory();
+			var storageDir:String =
+				StorageUtil.getStorageDirectory();
 
-			if (!FileSystem.exists(storageDir))
-				FileSystem.createDirectory(storageDir);
+			ensureDirectory(storageDir);
 		}
 		catch (e:Dynamic)
 		{
@@ -111,65 +160,103 @@ class StorageUtil
 	}
 
 	/**
-	 * Extracts every embedded file inside:
+	 * Copies:
 	 *
 	 * assets/...
-	 * mods/...
+	 * BFEXEOPT/mods/...
 	 *
-	 * into the Android filesystem.
+	 * from the APK asset system into:
 	 *
-	 * This is called from Main.hx after the working directory
-	 * has been changed to the selected storage directory.
+	 * .BFEXEOPT/assets/...
+	 * .BFEXEOPT/mods/...
 	 */
 	public static function extractBundledFiles():Void
 	{
 		try
 		{
-			var storageDir:String = Path.addTrailingSlash(getStorageDirectory());
+			var storageDir:String =
+				Path.addTrailingSlash(
+					getStorageDirectory()
+				);
 
-			extractAssetDirectory('assets/', storageDir);
-			extractAssetDirectory('mods/', storageDir);
+			// Default engine/game assets.
+			extractAssetDirectory(
+				'assets/',
+				storageDir,
+				'assets/'
+			);
+
+			// Bundled BFEXEOPT mods.
+			extractAssetDirectory(
+				'BFEXEOPT/mods/',
+				storageDir,
+				'mods/'
+			);
 		}
 		catch (e:Dynamic)
 		{
-			trace('[StorageUtil] Extraction failed: ' + e);
+			trace(
+				'[StorageUtil] Extraction failed: ' + e
+			);
 		}
 	}
 
 	/**
-	 * Extracts every file belonging to a specific virtual directory.
+	 * Extracts files from an embedded asset prefix.
+	 *
+	 * sourcePrefix:
+	 *     Path inside APK asset system.
+	 *
+	 * outputPrefix:
+	 *     Path inside .BFEXEOPT/.
 	 */
-	private static function extractAssetDirectory(prefix:String, storageDir:String):Void
+	private static function extractAssetDirectory(
+		sourcePrefix:String,
+		storageDir:String,
+		outputPrefix:String
+	):Void
 	{
-		var assetList:Array<String> = Assets.list();
+		var assetList:Array<String> =
+			Assets.list();
 
 		for (assetPath in assetList)
 		{
 			if (assetPath == null)
 				continue;
 
-			var normalized:String = assetPath.split('\\').join('/');
+			var normalized:String =
+				assetPath.split('\\').join('/');
 
-			if (!normalized.startsWith(prefix))
+			if (!normalized.startsWith(sourcePrefix))
 				continue;
 
-			var relativePath:String = normalized.substr(prefix.length);
+			var relativePath:String =
+				normalized.substr(sourcePrefix.length);
 
 			if (relativePath.length == 0)
 				continue;
 
-			var outputPath:String = storageDir + normalized;
-			var outputDirectory:String = Path.directory(outputPath);
+			var outputPath:String =
+				storageDir
+				+ outputPrefix
+				+ relativePath;
+
+			var outputDirectory:String =
+				Path.directory(outputPath);
 
 			ensureDirectory(outputDirectory);
 
 			try
 			{
-				var bytes:Bytes = Assets.getBytes(assetPath);
+				var bytes:Bytes =
+					Assets.getBytes(assetPath);
 
 				if (bytes == null)
 				{
-					trace('[StorageUtil] Unable to read asset: ' + assetPath);
+					trace(
+						'[StorageUtil] Unable to read asset: '
+						+ assetPath
+					);
 					continue;
 				}
 
@@ -179,7 +266,8 @@ class StorageUtil
 				{
 					try
 					{
-						var existingSize:Int = FileSystem.stat(outputPath).size;
+						var existingSize:Int =
+							FileSystem.stat(outputPath).size;
 
 						if (existingSize == bytes.length)
 							shouldWrite = false;
@@ -192,21 +280,33 @@ class StorageUtil
 
 				if (shouldWrite)
 				{
-					File.saveBytes(outputPath, bytes);
-					trace('[StorageUtil] Extracted: ' + normalized);
+					File.saveBytes(
+						outputPath,
+						bytes
+					);
+
+					trace(
+						'[StorageUtil] Extracted: '
+						+ normalized
+						+ ' -> '
+						+ outputPath
+					);
 				}
 			}
 			catch (e:Dynamic)
 			{
-				trace('[StorageUtil] Failed to extract: ' + assetPath);
+				trace(
+					'[StorageUtil] Failed to extract: '
+					+ assetPath
+					+ ' (' + e + ')'
+				);
 			}
 		}
 	}
 
-	/**
-	 * Creates a directory and all missing parent directories.
-	 */
-	private static function ensureDirectory(directory:String):Void
+	private static function ensureDirectory(
+		directory:String
+	):Void
 	{
 		if (directory == null || directory.length == 0)
 			return;
@@ -214,36 +314,68 @@ class StorageUtil
 		if (FileSystem.exists(directory))
 			return;
 
-		var parent:String = Path.directory(directory);
+		var parent:String =
+			Path.directory(directory);
 
-		if (parent != directory && parent.length > 0 && !FileSystem.exists(parent))
+		if (
+			parent != directory
+			&& parent.length > 0
+			&& !FileSystem.exists(parent)
+		)
+		{
 			ensureDirectory(parent);
+		}
 
 		if (!FileSystem.exists(directory))
 			FileSystem.createDirectory(directory);
 	}
 
-	public static function checkExternalPaths(?splitStorage:Bool = false):Array<String>
+	public static function checkExternalPaths(
+		?splitStorage:Bool = false
+	):Array<String>
 	{
 		var paths:Array<String> = [];
 
 		try
 		{
-			var process = new Process('grep -o "/storage/....-...." /proc/mounts | sort -u');
-			var output:String = process.stdout.readAll().toString();
+			var process =
+				new Process(
+					'grep -o "/storage/....-...." /proc/mounts | sort -u'
+				);
+
+			var output:String =
+				process.stdout.readAll().toString();
+
 			process.close();
 
-			paths = output.split('\n').filter(p -> p.trim().length > 0);
+			paths =
+				output
+					.split('\n')
+					.filter(
+						p -> p.trim().length > 0
+					);
 
 			if (splitStorage)
-				paths = paths.map(p -> p.replace('/storage/', ''));
+			{
+				paths =
+					paths.map(
+						p -> p.replace(
+							'/storage/',
+							''
+						)
+					);
+			}
 		}
-		catch (e:Exception) {}
+		catch (e:Exception)
+		{
+		}
 
 		return paths;
 	}
 
-	public static function getExternalDirectory(externalDir:String):String
+	public static function getExternalDirectory(
+		externalDir:String
+	):String
 	{
 		var daPath:String = '';
 
@@ -253,7 +385,9 @@ class StorageUtil
 				daPath = path;
 		}
 
-		return Path.addTrailingSlash(daPath.trim());
+		return Path.addTrailingSlash(
+			daPath.trim()
+		);
 	}
 
 	#end
@@ -267,63 +401,92 @@ enum abstract StorageType(String) from String to String
 {
 	final forcedPath = '/storage/emulated/0/';
 
-	var EXTERNAL_DATA = "EXTERNAL_DATA";
-	var EXTERNAL_OBB = "EXTERNAL_OBB";
-	var EXTERNAL_MEDIA = "EXTERNAL_MEDIA";
-	var EXTERNAL = "EXTERNAL";
+	var EXTERNAL_DATA = 'EXTERNAL_DATA';
+	var EXTERNAL_OBB = 'EXTERNAL_OBB';
+	var EXTERNAL_MEDIA = 'EXTERNAL_MEDIA';
+	var EXTERNAL = 'EXTERNAL';
 
-	public static function fromStr(str:String):StorageType
+	public static function fromStr(
+		str:String
+	):StorageType
 	{
-		var packageName:String = lime.app.Application.current.meta.get('packageName');
-		var fileName:String = lime.app.Application.current.meta.get('file');
+		var packageName:String =
+			lime.app.Application.current.meta
+				.get('packageName');
+
+		var fileName:String =
+			lime.app.Application.current.meta
+				.get('file');
 
 		return switch (str)
 		{
-			case "EXTERNAL_DATA":
+			case 'EXTERNAL_DATA':
 				AndroidContext.getExternalFilesDir();
 
-			case "EXTERNAL_OBB":
+			case 'EXTERNAL_OBB':
 				AndroidContext.getObbDir();
 
-			case "EXTERNAL_MEDIA":
-				AndroidEnvironment.getExternalStorageDirectory()
+			case 'EXTERNAL_MEDIA':
+				AndroidEnvironment
+					.getExternalStorageDirectory()
 					+ '/Android/media/'
 					+ packageName;
 
-			case "EXTERNAL":
-				AndroidEnvironment.getExternalStorageDirectory()
+			case 'EXTERNAL':
+				AndroidEnvironment
+					.getExternalStorageDirectory()
 					+ '/.'
 					+ fileName;
 
 			default:
-				StorageUtil.getExternalDirectory(str)
+				StorageUtil
+					.getExternalDirectory(str)
 					+ '.'
 					+ fileName;
-		}
+		};
 	}
 
-	public static function fromStrForce(str:String):StorageType
+	public static function fromStrForce(
+		str:String
+	):StorageType
 	{
-		var packageName:String = lime.app.Application.current.meta.get('packageName');
-		var fileName:String = lime.app.Application.current.meta.get('file');
+		var packageName:String =
+			lime.app.Application.current.meta
+				.get('packageName');
+
+		var fileName:String =
+			lime.app.Application.current.meta
+				.get('file');
 
 		return switch (str)
 		{
-			case "EXTERNAL_DATA":
-				forcedPath + 'Android/data/' + packageName + '/files';
+			case 'EXTERNAL_DATA':
+				forcedPath
+					+ 'Android/data/'
+					+ packageName
+					+ '/files';
 
-			case "EXTERNAL_OBB":
-				forcedPath + 'Android/obb/' + packageName;
+			case 'EXTERNAL_OBB':
+				forcedPath
+					+ 'Android/obb/'
+					+ packageName;
 
-			case "EXTERNAL_MEDIA":
-				forcedPath + 'Android/media/' + packageName;
+			case 'EXTERNAL_MEDIA':
+				forcedPath
+					+ 'Android/media/'
+					+ packageName;
 
-			case "EXTERNAL":
-				forcedPath + '.' + fileName;
+			case 'EXTERNAL':
+				forcedPath
+					+ '.'
+					+ fileName;
 
 			default:
-				StorageUtil.getExternalDirectory(str) + '.' + fileName;
-		}
+				StorageUtil
+					.getExternalDirectory(str)
+					+ '.'
+					+ fileName;
+		};
 	}
 }
 
