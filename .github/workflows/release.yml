@@ -1,14 +1,13 @@
 name: Release
 
-on:
-  workflow_dispatch:
+on: workflow_dispatch
 
 permissions:
   contents: write
   discussions: write
 
 env:
-  PROJECT_NAME: PsychEngine
+  PROJECT_NAME: BFEXEOPT
 
 jobs:
   build:
@@ -23,6 +22,12 @@ jobs:
             artifactName: Android ARM64
             artifactPath: "export/release/android/bin/app/build/outputs/apk/release/*.apk"
 
+          - name: Android ARMv7
+            os: macos-15
+            buildArgs: "android -final -ONLY_ARMV7"
+            artifactName: Android ARMv7
+            artifactPath: "export/release/android/bin/app/build/outputs/apk/release/*.apk"
+
     uses: ./.github/workflows/build.yml
 
     with:
@@ -34,9 +39,7 @@ jobs:
 
   Releaser:
     needs: [build]
-
     runs-on: ubuntu-latest
-
     permissions: write-all
 
     steps:
@@ -51,10 +54,21 @@ jobs:
           mv /home/runner/${{ env.PROJECT_NAME }}-release.apk \
              /home/runner/${{ env.PROJECT_NAME }}-Android-ARM64.apk
 
+      - name: Download Android ARMv7 Build
+        uses: actions/download-artifact@main
+        with:
+          name: Android ARMv7
+          path: /home/runner
+
+      - name: Move Android ARMv7 File
+        run: |
+          mv /home/runner/${{ env.PROJECT_NAME }}-release.apk \
+             /home/runner/${{ env.PROJECT_NAME }}-Android-ARMv7.apk
+
       - name: Publish The Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "Template"
+          name: "BFEXEOPT"
           tag_name: "1.0.4"
           last_release: false
           files: |
