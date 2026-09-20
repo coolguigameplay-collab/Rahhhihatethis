@@ -3,6 +3,9 @@ package mobile.backend;
 import lime.system.System as LimeSystem;
 import haxe.io.Path;
 import haxe.Exception;
+import haxe.io.Bytes;
+import openfl.utils.Assets;
+
 #if sys
 import sys.FileSystem;
 import sys.io.File;
@@ -17,6 +20,7 @@ class StorageUtil
 	public static function getStorageDirectory(?force:Bool = false):String
 	{
 		var daPath:String = '';
+
 		#if android
 		if (!FileSystem.exists(rootDir + 'storagetype.txt'))
 			File.saveContent(rootDir + 'storagetype.txt', ClientPrefs.data.storageType);
@@ -24,8 +28,10 @@ class StorageUtil
 		var curStorageType:String = File.getContent(rootDir + 'storagetype.txt').trim();
 		daPath = force ? StorageType.fromStrForce(curStorageType) : StorageType.fromStr(curStorageType);
 		daPath = Path.addTrailingSlash(daPath);
+
 		#elseif ios
 		daPath = LimeSystem.documentsDirectory;
+
 		#else
 		daPath = Sys.getCwd();
 		#end
@@ -53,6 +59,7 @@ class StorageUtil
 	}
 
 	#if android
+
 	public static function requestPermissions():Void
 	{
 		var mediaPermissions:Array<String> = AndroidVersion.SDK_INT >= AndroidVersionCode.TIRAMISU
@@ -74,19 +81,146 @@ class StorageUtil
 			: AndroidPermissions.getGrantedPermissions().contains('android.permission.READ_EXTERNAL_STORAGE');
 
 		if (!hasCorePermission)
-			CoolUtil.showPopUp('If you accepted the permissions you are all good!' + '\nIf you didn\'t then expect a crash' + '\nPress OK to see what happens', 'Notice!');
+		{
+			CoolUtil.showPopUp(
+				'If you accepted the permissions you are all good!'
+				+ '\nIf you didn\'t then expect a crash'
+				+ '\nPress OK to see what happens',
+				'Notice!'
+			);
+		}
 
 		try
 		{
 			var storageDir:String = StorageUtil.getStorageDirectory();
+
 			if (!FileSystem.exists(storageDir))
 				FileSystem.createDirectory(storageDir);
 		}
 		catch (e:Dynamic)
 		{
-			CoolUtil.showPopUp('Please create directory to\n' + StorageUtil.getStorageDirectory(true) + '\nPress OK to close the game', 'Error!');
+			CoolUtil.showPopUp(
+				'Please create directory to\n'
+				+ StorageUtil.getStorageDirectory(true)
+				+ '\nPress OK to close the game',
+				'Error!'
+			);
+
 			LimeSystem.exit(1);
 		}
+	}
+
+	/**
+	 * Extracts every embedded file inside:
+	 *
+	 * assets/...
+	 * mods/...
+	 *
+	 * into the Android filesystem.
+	 *
+	 * This is called from Main.hx after the working directory
+	 * has been changed to the selected storage directory.
+	 */
+	public static function extractBundledFiles():Void
+	{
+		try
+		{
+			var storageDir:String = Path.addTrailingSlash(getStorageDirectory());
+
+			extractAssetDirectory('assets/', storageDir);
+			extractAssetDirectory('mods/', storageDir);
+		}
+		catch (e:Dynamic)
+		{
+			trace('[StorageUtil] Extraction failed: ' + e);
+		}
+	}
+
+	/**
+	 * Extracts every file belonging to a specific virtual directory.
+	 */
+	private static function extractAssetDirectory(prefix:String, storageDir:String):Void
+	{
+		var assetList:Array<String> = Assets.list();
+
+		for (assetPath in assetList)
+		{
+			if (assetPath == null)
+				continue;
+
+			var normalized:String = assetPath.split('\\').join('/');
+
+			if (!normalized.startsWith(prefix))
+				continue;
+
+			var relativePath:String = normalized.substr(prefix.length);
+
+			if (relativePath.length == 0)
+				continue;
+
+			var outputPath:String = storageDir + normalized;
+			var outputDirectory:String = Path.directory(outputPath);
+
+			ensureDirectory(outputDirectory);
+
+			try
+			{
+				var bytes:Bytes = Assets.getBytes(assetPath);
+
+				if (bytes == null)
+				{
+					trace('[StorageUtil] Unable to read asset: ' + assetPath);
+					continue;
+				}
+
+				var shouldWrite:Bool = true;
+
+				if (FileSystem.exists(outputPath))
+				{
+					try
+					{
+						var existingSize:Int = FileSystem.stat(outputPath).size;
+
+						if (existingSize == bytes.length)
+							shouldWrite = false;
+					}
+					catch (e:Dynamic)
+					{
+						shouldWrite = true;
+					}
+				}
+
+				if (shouldWrite)
+				{
+					File.saveBytes(outputPath, bytes);
+					trace('[StorageUtil] Extracted: ' + normalized);
+				}
+			}
+			catch (e:Dynamic)
+			{
+				trace('[StorageUtil] Failed to extract: ' + assetPath);
+			}
+		}
+	}
+
+	/**
+	 * Creates a directory and all missing parent directories.
+	 */
+	private static function ensureDirectory(directory:String):Void
+	{
+		if (directory == null || directory.length == 0)
+			return;
+
+		if (FileSystem.exists(directory))
+			return;
+
+		var parent:String = Path.directory(directory);
+
+		if (parent != directory && parent.length > 0 && !FileSystem.exists(parent))
+			ensureDirectory(parent);
+
+		if (!FileSystem.exists(directory))
+			FileSystem.createDirectory(directory);
 	}
 
 	public static function checkExternalPaths(?splitStorage:Bool = false):Array<String>
@@ -100,6 +234,7 @@ class StorageUtil
 			process.close();
 
 			paths = output.split('\n').filter(p -> p.trim().length > 0);
+
 			if (splitStorage)
 				paths = paths.map(p -> p.replace('/storage/', ''));
 		}
@@ -111,17 +246,22 @@ class StorageUtil
 	public static function getExternalDirectory(externalDir:String):String
 	{
 		var daPath:String = '';
+
 		for (path in checkExternalPaths())
+		{
 			if (path.contains(externalDir))
 				daPath = path;
+		}
 
 		return Path.addTrailingSlash(daPath.trim());
 	}
+
 	#end
 	#end
 }
 
 #if android
+
 @:runtimeValue
 enum abstract StorageType(String) from String to String
 {
@@ -139,11 +279,26 @@ enum abstract StorageType(String) from String to String
 
 		return switch (str)
 		{
-			case "EXTERNAL_DATA": AndroidContext.getExternalFilesDir();
-			case "EXTERNAL_OBB": AndroidContext.getObbDir();
-			case "EXTERNAL_MEDIA": AndroidEnvironment.getExternalStorageDirectory() + '/Android/media/' + packageName;
-			case "EXTERNAL": AndroidEnvironment.getExternalStorageDirectory() + '/.' + fileName;
-			default: StorageUtil.getExternalDirectory(str) + '.' + fileName;
+			case "EXTERNAL_DATA":
+				AndroidContext.getExternalFilesDir();
+
+			case "EXTERNAL_OBB":
+				AndroidContext.getObbDir();
+
+			case "EXTERNAL_MEDIA":
+				AndroidEnvironment.getExternalStorageDirectory()
+					+ '/Android/media/'
+					+ packageName;
+
+			case "EXTERNAL":
+				AndroidEnvironment.getExternalStorageDirectory()
+					+ '/.'
+					+ fileName;
+
+			default:
+				StorageUtil.getExternalDirectory(str)
+					+ '.'
+					+ fileName;
 		}
 	}
 
@@ -154,12 +309,22 @@ enum abstract StorageType(String) from String to String
 
 		return switch (str)
 		{
-			case "EXTERNAL_DATA": forcedPath + 'Android/data/' + packageName + '/files';
-			case "EXTERNAL_OBB": forcedPath + 'Android/obb/' + packageName;
-			case "EXTERNAL_MEDIA": forcedPath + 'Android/media/' + packageName;
-			case "EXTERNAL": forcedPath + '.' + fileName;
-			default: StorageUtil.getExternalDirectory(str) + '.' + fileName;
+			case "EXTERNAL_DATA":
+				forcedPath + 'Android/data/' + packageName + '/files';
+
+			case "EXTERNAL_OBB":
+				forcedPath + 'Android/obb/' + packageName;
+
+			case "EXTERNAL_MEDIA":
+				forcedPath + 'Android/media/' + packageName;
+
+			case "EXTERNAL":
+				forcedPath + '.' + fileName;
+
+			default:
+				StorageUtil.getExternalDirectory(str) + '.' + fileName;
 		}
 	}
 }
+
 #end
