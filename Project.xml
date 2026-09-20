@@ -4,10 +4,8 @@
 
 	<app title="BFEXEOPT" file="BFEXEOPT" packageName="com.bfexeopt.engine" package="com.bfexeopt.engine" main="Main" version="0.2.8" company="BFEXEOPT" />
 
-	<!--Switch Export with Unique ApplicationID and Icon-->
 	<set name="APP_ID" value="0x0100f6c013bbc000" />
 
-	<!-- NOTE TO SELF: DISABLE THIS IF ISSUES ARE FOUND -->
 	<haxedef name="LINC_LUA_RELATIVE_DYNAMIC_LIB"/>
 
 	<app preloader="flixel.system.FlxPreloader" />
@@ -140,11 +138,22 @@
 
 	<define name="CHECK_FOR_UPDATES" if="officialBuild"/>
 
-	<!-- ______________________________ BFEXEOPT MODS ______________________________ -->
+	<!-- ______________________________ BFEXEOPT MOD PACKAGE ______________________________ -->
 
 	<section if="MODS_ALLOWED">
+		<!--
+			This folder is the packaged mod container.
+
+			Example:
+			BFEXEOPT/
+			└── mods/
+				└── TestMod/
+					└── test.txt
+		-->
 		<assets path="BFEXEOPT" rename="BFEXEOPT" embed="false" />
-		<assets path="BFEXEOPTList.txt" rename="BFEXEOPTList.txt" />
+
+		<assets path="BFEXEOPTList.txt"
+			rename="BFEXEOPTList.txt" />
 	</section>
 
 	<assets path="art/readme.txt"
@@ -210,7 +219,7 @@
 	<haxedef name="NAPE_RELEASE_BUILD"
 		unless="debug" />
 
-	<!--Used for crash handler-->
+	<!-- Used for crash handler -->
 
 	<section if="cpp">
 		<haxedef name="HXCPP_CHECK_POINTER" />
@@ -224,7 +233,7 @@
 	<app path="export\32bit\windows\bin"
 		if="32bits" />
 
-	<!--Disable deprecated warnings-->
+	<!-- Disable deprecated warnings -->
 
 	<haxedef name="no-deprecation-warnings" />
 
@@ -251,7 +260,7 @@
 	<haxedef name="SHARE_MOBILE_FILES"
 		if="mobile" />
 
-	<!--Macro fixes-->
+	<!-- Macro fixes -->
 
 	<haxeflag name="--macro"
 		value="allowPackage('flash')" />
