@@ -150,7 +150,7 @@
 				└── TestMod/
 					└── test.txt
 		-->
-		<assets path="BFEXEOPT" rename="BFEXEOPT" embed="false" />
+		<assets path="BFEXEOPT" rename="BFEXEOPT" embed="true" />
 
 		<assets path="BFEXEOPTList.txt"
 			rename="BFEXEOPTList.txt" />
