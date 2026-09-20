@@ -1,425 +1,233 @@
-package mobile.backend;
+package;
 
+import debug.FPSCounter;
+import backend.Highscore;
+import flixel.FlxGame;
+import openfl.Lib;
+import openfl.display.Sprite;
+import openfl.events.Event;
+import openfl.display.StageScaleMode;
+import lime.app.Application;
+import states.TitleState;
+#if HSCRIPT_ALLOWED
+import crowplexus.iris.Iris;
+import psychlua.HScript.HScriptInfos;
+#end
+import mobile.backend.MobileScaleMode;
+import openfl.events.KeyboardEvent;
 import lime.system.System as LimeSystem;
-import lime.utils.Assets;
-import haxe.io.Path;
-import haxe.Exception;
-import haxe.io.Bytes;
 
-#if sys
-import sys.FileSystem;
-import sys.io.File;
-import sys.io.Process;
+#if (linux || mac)
+import lime.graphics.Image;
+#end
+#if COPYSTATE_ALLOWED
+import states.CopyState;
+#end
+import backend.Highscore;
+
+// NATIVE API STUFF, YOU CAN IGNORE THIS AND SCROLL //
+#if (linux && !debug)
+@:cppInclude('./external/gamemode_client.h')
+@:cppFileCode('#define GAMEMODE_AUTO')
 #end
 
-class StorageUtil
+// // // // // // // // //
+class Main extends Sprite
 {
-	#if sys
-	public static final rootDir:String = LimeSystem.applicationStorageDirectory;
+	public static final game = {
+		width: 1280, // WINDOW width
+		height: 720, // WINDOW height
+		initialState: TitleState, // initial game state
+		framerate: 60, // default framerate
+		skipSplash: true, // if the default flixel splash screen should be skipped
+		startFullscreen: false // if the game should start at fullscreen mode
+	};
 
-	public static function getStorageDirectory(?force:Bool = false):String
+	public static var fpsVar:FPSCounter;
+
+	public static final platform:String = #if mobile "Phones" #else "PCs" #end;
+
+	// You can pretty much ignore everything from here on - your code should go in your states.
+
+	public static function main():Void
 	{
-		var daPath:String = '';
+		Lib.current.addChild(new Main());
+		#if cpp
+		cpp.NativeGc.enable(true);
+		#elseif hl
+		hl.Gc.enable(true);
+		#end
+	}
 
+	#if mobile
+	public static function refreshScaleMode():Void
+	{
+		if (Std.isOfType(FlxG.scaleMode, MobileScaleMode))
+			FlxG.scaleMode = new MobileScaleMode();
+	}
+	#end
+
+	public function new()
+	{
+		super();
+		#if mobile
 		#if android
-		if (!FileSystem.exists(rootDir + 'storagetype.txt'))
-			File.saveContent(rootDir + 'storagetype.txt', ClientPrefs.data.storageType);
+		StorageUtil.requestPermissions();
+		#end
+		Sys.setCwd(StorageUtil.getStorageDirectory());
+		#end
+		backend.CrashHandler.init();
 
-		var curStorageType:String = File.getContent(rootDir + 'storagetype.txt').trim();
-
-		daPath = force
-			? StorageType.fromStrForce(curStorageType)
-			: StorageType.fromStr(curStorageType);
-
-		daPath = Path.addTrailingSlash(daPath);
-
-		#elseif ios
-		daPath = LimeSystem.documentsDirectory;
-
-		#else
-		daPath = Sys.getCwd();
+		#if (cpp && windows)
+		backend.Native.fixScaling();
 		#end
 
-		return daPath;
-	}
+		#if VIDEOS_ALLOWED
+		hxvlc.util.Handle.init(#if (hxvlc >= "1.8.0")  ['--no-lua'] #end);
+		#end
 
-	public static function saveContent(fileName:String, fileData:String, ?alert:Bool = true):Void
-	{
-		try
-		{
-			if (!FileSystem.exists('saves'))
-				FileSystem.createDirectory('saves');
+		#if LUA_ALLOWED
+		Mods.pushGlobalMods();
+		#end
+		Mods.loadTopMod();
 
-			File.saveContent('saves/$fileName', fileData);
+		FlxG.save.bind('funkin', CoolUtil.getSavePath());
+		Highscore.load();
 
-			if (alert)
-				CoolUtil.showPopUp('$fileName has been saved.', "Success!");
-		}
-		catch (e:Exception)
-		{
-			if (alert)
-				CoolUtil.showPopUp(
-					'$fileName couldn\'t be saved.\n(${e.message})',
-					"Error!"
-				);
-		}
-	}
-
-	#if android
-
-	public static function requestPermissions():Void
-	{
-		var mediaPermissions:Array<String> =
-			AndroidVersion.SDK_INT >= AndroidVersionCode.TIRAMISU
-			? [
-				'READ_MEDIA_IMAGES',
-				'READ_MEDIA_VIDEO',
-				'READ_MEDIA_AUDIO'
-			]
-			: [
-				'READ_EXTERNAL_STORAGE',
-				'WRITE_EXTERNAL_STORAGE'
-			];
-
-		AndroidPermissions.requestPermissions(mediaPermissions);
-
-		if (!AndroidEnvironment.isExternalStorageManager())
-		{
-			if (AndroidVersion.SDK_INT >= AndroidVersionCode.S)
-				AndroidSettings.requestSetting('REQUEST_MANAGE_MEDIA');
-
-			AndroidSettings.requestSetting(
-				'MANAGE_APP_ALL_FILES_ACCESS_PERMISSION'
-			);
-		}
-
-		var hasCorePermission:Bool =
-			AndroidVersion.SDK_INT >= AndroidVersionCode.TIRAMISU
-			? AndroidPermissions.getGrantedPermissions()
-				.contains('android.permission.READ_MEDIA_IMAGES')
-			: AndroidPermissions.getGrantedPermissions()
-				.contains('android.permission.READ_EXTERNAL_STORAGE');
-
-		if (!hasCorePermission)
-		{
-			CoolUtil.showPopUp(
-				'If you accepted the permissions you are all good!'
-				+ '\nIf you didn\'t then expect a crash'
-				+ '\nPress OK to see what happens',
-				'Notice!'
-			);
-		}
-
-		try
-		{
-			var storageDir:String = StorageUtil.getStorageDirectory();
-
-			if (!FileSystem.exists(storageDir))
-				FileSystem.createDirectory(storageDir);
-		}
-		catch (e:Dynamic)
-		{
-			CoolUtil.showPopUp(
-				'Please create directory to\n'
-				+ StorageUtil.getStorageDirectory(true)
-				+ '\nPress OK to close the game',
-				'Error!'
-			);
-
-			LimeSystem.exit(1);
-		}
-	}
-
-	/**
-	 * Installs bundled BFEXEOPT mods into the normal
-	 * .BFEXEOPT/mods/ directory.
-	 *
-	 * Source:
-	 * BFEXEOPT/mods/...
-	 *
-	 * Destination:
-	 * .BFEXEOPT/mods/...
-	 */
-	public static function extractBundledFiles():Void
-	{
-		try
-		{
-			var storageDir:String =
-				Path.addTrailingSlash(getStorageDirectory());
-
-			extractBFEXEOPTMods(storageDir);
-		}
-		catch (e:Dynamic)
-		{
-			trace('[StorageUtil] BFEXEOPT installation failed: ' + e);
-		}
-	}
-
-	/**
-	 * Finds only files inside:
-	 *
-	 * BFEXEOPT/mods/
-	 *
-	 * and copies them to:
-	 *
-	 * .BFEXEOPT/mods/
-	 */
-	private static function extractBFEXEOPTMods(storageDir:String):Void
-	{
-		var assetList:Array<String> = Assets.list();
-
-		for (assetPath in assetList)
-		{
-			if (assetPath == null)
-				continue;
-
-			var normalized:String =
-				assetPath.split('\\').join('/');
-
-			// Only process BFEXEOPT/mods/
-			if (!normalized.startsWith('BFEXEOPT/mods/'))
-				continue;
-
-			var relativePath:String =
-				normalized.substr('BFEXEOPT/mods/'.length);
-
-			if (relativePath.length == 0)
-				continue;
-
-			// Destination:
-			// .BFEXEOPT/mods/...
-			var outputPath:String =
-				storageDir
-				+ '.BFEXEOPT/'
-				+ 'mods/'
-				+ relativePath;
-
-			var outputDirectory:String =
-				Path.directory(outputPath);
-
-			ensureDirectory(outputDirectory);
-
-			try
-			{
-				var bytes:Bytes =
-					Assets.getBytes(assetPath);
-
-				if (bytes == null)
-				{
-					trace(
-						'[StorageUtil] Unable to read: '
-						+ assetPath
-					);
-
-					continue;
-				}
-
-				var shouldWrite:Bool = true;
-
-				if (FileSystem.exists(outputPath))
-				{
-					try
-					{
-						var existingSize:Int =
-							FileSystem.stat(outputPath).size;
-
-						// Same size = don't rewrite it.
-						if (existingSize == bytes.length)
-							shouldWrite = false;
-					}
-					catch (e:Dynamic)
-					{
-						shouldWrite = true;
-					}
-				}
-
-				if (shouldWrite)
-				{
-					File.saveBytes(outputPath, bytes);
-
-					trace(
-						'[StorageUtil] Installed: '
-						+ relativePath
-					);
-				}
+		#if HSCRIPT_ALLOWED
+		Iris.warn = function(x, ?pos:haxe.PosInfos) {
+			Iris.logLevel(WARN, x, pos);
+			var newPos:HScriptInfos = cast pos;
+			if (newPos.showLine == null) newPos.showLine = true;
+			var msgInfo:String = (newPos.funcName != null ? '(${newPos.funcName}) - ' : '')  + '${newPos.fileName}:';
+			#if LUA_ALLOWED
+			if (newPos.isLua == true) {
+				msgInfo += 'HScript:';
+				newPos.showLine = false;
 			}
-			catch (e:Dynamic)
-			{
-				trace(
-					'[StorageUtil] Failed: '
-					+ assetPath
-					+ ' -> '
-					+ e
-				);
+			#end
+			if (newPos.showLine == true) {
+				msgInfo += '${newPos.lineNumber}:';
 			}
+			msgInfo += ' $x';
+			if (PlayState.instance != null)
+				PlayState.instance.addTextToDebug('WARNING: $msgInfo', FlxColor.YELLOW);
 		}
-	}
-
-	/**
-	 * Creates a directory and all missing parents.
-	 */
-	private static function ensureDirectory(directory:String):Void
-	{
-		if (directory == null || directory.length == 0)
-			return;
-
-		if (FileSystem.exists(directory))
-			return;
-
-		var parent:String =
-			Path.directory(directory);
-
-		if (
-			parent != directory
-			&& parent.length > 0
-			&& !FileSystem.exists(parent)
-		)
-		{
-			ensureDirectory(parent);
-		}
-
-		if (!FileSystem.exists(directory))
-			FileSystem.createDirectory(directory);
-	}
-
-	public static function checkExternalPaths(
-		?splitStorage:Bool = false
-	):Array<String>
-	{
-		var paths:Array<String> = [];
-
-		try
-		{
-			var process = new Process(
-				'grep -o "/storage/....-...." /proc/mounts | sort -u'
-			);
-
-			var output:String =
-				process.stdout.readAll().toString();
-
-			process.close();
-
-			paths = output
-				.split('\n')
-				.filter(
-					p -> p.trim().length > 0
-				);
-
-			if (splitStorage)
-			{
-				paths = paths.map(
-					p -> p.replace('/storage/', '')
-				);
+		Iris.error = function(x, ?pos:haxe.PosInfos) {
+			Iris.logLevel(ERROR, x, pos);
+			var newPos:HScriptInfos = cast pos;
+			if (newPos.showLine == null) newPos.showLine = true;
+			var msgInfo:String = (newPos.funcName != null ? '(${newPos.funcName}) - ' : '')  + '${newPos.fileName}:';
+			#if LUA_ALLOWED
+			if (newPos.isLua == true) {
+				msgInfo += 'HScript:';
+				newPos.showLine = false;
 			}
+			#end
+			if (newPos.showLine == true) {
+				msgInfo += '${newPos.lineNumber}:';
+			}
+			msgInfo += ' $x';
+			if (PlayState.instance != null)
+				PlayState.instance.addTextToDebug('ERROR: $msgInfo', FlxColor.RED);
 		}
-		catch (e:Exception) {}
+		Iris.fatal = function(x, ?pos:haxe.PosInfos) {
+			Iris.logLevel(FATAL, x, pos);
+			var newPos:HScriptInfos = cast pos;
+			if (newPos.showLine == null) newPos.showLine = true;
+			var msgInfo:String = (newPos.funcName != null ? '(${newPos.funcName}) - ' : '')  + '${newPos.fileName}:';
+			#if LUA_ALLOWED
+			if (newPos.isLua == true) {
+				msgInfo += 'HScript:';
+				newPos.showLine = false;
+			}
+			#end
+			if (newPos.showLine == true) {
+				msgInfo += '${newPos.lineNumber}:';
+			}
+			msgInfo += ' $x';
+			if (PlayState.instance != null)
+				PlayState.instance.addTextToDebug('FATAL: $msgInfo', 0xFFBB0000);
+		}
+		#end
 
-		return paths;
+		#if LUA_ALLOWED Lua.set_callbacks_function(cpp.Callable.fromStaticFunction(psychlua.CallbackHandler.call)); #end
+		Controls.instance = new Controls();
+		ClientPrefs.loadDefaultKeys();
+		#if ACHIEVEMENTS_ALLOWED Achievements.load(); #end
+		#if mobile
+		FlxG.signals.postGameStart.addOnce(() -> {
+			FlxG.scaleMode = new MobileScaleMode();
+		});
+		#end
+		addChild(new FlxGame(game.width, game.height, #if COPYSTATE_ALLOWED !CopyState.checkExistingFiles() ? CopyState : #end game.initialState, game.framerate, game.framerate, game.skipSplash, game.startFullscreen));
+
+		fpsVar = new FPSCounter(10, 3, 0xFFFFFF);
+		addChild(fpsVar);
+		Lib.current.stage.align = "tl";
+		Lib.current.stage.scaleMode = StageScaleMode.NO_SCALE;
+		if(fpsVar != null) {
+			fpsVar.visible = ClientPrefs.data.showFPS;
+		}
+
+		#if (linux || mac) // fix the app icon not showing up on the Linux Panel / Mac Dock
+		var icon = Image.fromFile("icon.png");
+		Lib.current.stage.window.setIcon(icon);
+		#end
+
+		#if html5
+		FlxG.autoPause = false;
+		FlxG.mouse.visible = false;
+		#end
+
+		FlxG.fixedTimestep = false;
+		FlxG.game.focusLostFramerate = #if mobile 30 #else 60 #end;
+		#if web
+		FlxG.keys.preventDefaultKeys.push(TAB);
+		#else
+		FlxG.keys.preventDefaultKeys = [TAB];
+		#end
+
+		#if DISCORD_ALLOWED
+		DiscordClient.prepare();
+		#end
+		
+		#if desktop FlxG.stage.addEventListener(KeyboardEvent.KEY_UP, toggleFullScreen); #end
+
+		#if mobile
+		#if android FlxG.android.preventDefaultKeys = [BACK]; #end
+		LimeSystem.allowScreenTimeout = ClientPrefs.data.screensaver;
+		#end
+
+		Application.current.window.vsync = ClientPrefs.data.vsync;
+
+		// shader coords fix
+		FlxG.signals.gameResized.add(function (w, h) {
+			var scale:Float = (FlxG.scaleMode != null && FlxG.scaleMode.gameSize.x > 0) ? (FlxG.scaleMode.gameSize.x / FlxG.width) : Math.min(w / FlxG.width, h / FlxG.height);
+
+			if(fpsVar != null)
+				fpsVar.positionFPS(10, 3, scale);
+		     if (FlxG.cameras != null) {
+			   for (cam in FlxG.cameras.list) {
+				if (cam != null && cam.filters != null)
+					resetSpriteCache(cam.flashSprite);
+			   }
+			}
+
+			if (FlxG.game != null)
+			resetSpriteCache(FlxG.game);
+		});
 	}
 
-	public static function getExternalDirectory(
-		externalDir:String
-	):String
-	{
-		var daPath:String = '';
-
-		for (path in checkExternalPaths())
-		{
-			if (path.contains(externalDir))
-				daPath = path;
-		}
-
-		return Path.addTrailingSlash(
-			daPath.trim()
-		);
-	}
-
-	#end
-	#end
-}
-
-#if android
-
-@:runtimeValue
-enum abstract StorageType(String) from String to String
-{
-	final forcedPath = '/storage/emulated/0/';
-
-	var EXTERNAL_DATA = "EXTERNAL_DATA";
-	var EXTERNAL_OBB = "EXTERNAL_OBB";
-	var EXTERNAL_MEDIA = "EXTERNAL_MEDIA";
-	var EXTERNAL = "EXTERNAL";
-
-	public static function fromStr(str:String):StorageType
-	{
-		var packageName:String =
-			lime.app.Application.current.meta.get('packageName');
-
-		var fileName:String =
-			lime.app.Application.current.meta.get('file');
-
-		return switch (str)
-		{
-			case "EXTERNAL_DATA":
-				AndroidContext.getExternalFilesDir();
-
-			case "EXTERNAL_OBB":
-				AndroidContext.getObbDir();
-
-			case "EXTERNAL_MEDIA":
-				AndroidEnvironment.getExternalStorageDirectory()
-					+ '/Android/media/'
-					+ packageName;
-
-			case "EXTERNAL":
-				AndroidEnvironment.getExternalStorageDirectory()
-					+ '/.'
-					+ fileName;
-
-			default:
-				StorageUtil.getExternalDirectory(str)
-					+ '.'
-					+ fileName;
+	static function resetSpriteCache(sprite:Sprite):Void {
+		@:privateAccess {
+		        sprite.__cacheBitmap = null;
+			sprite.__cacheBitmapData = null;
 		}
 	}
 
-	public static function fromStrForce(str:String):StorageType
-	{
-		var packageName:String =
-			lime.app.Application.current.meta.get('packageName');
-
-		var fileName:String =
-			lime.app.Application.current.meta.get('file');
-
-		return switch (str)
-		{
-			case "EXTERNAL_DATA":
-				forcedPath
-					+ 'Android/data/'
-					+ packageName
-					+ '/files';
-
-			case "EXTERNAL_OBB":
-				forcedPath
-					+ 'Android/obb/'
-					+ packageName;
-
-			case "EXTERNAL_MEDIA":
-				forcedPath
-					+ 'Android/media/'
-					+ packageName;
-
-			case "EXTERNAL":
-				forcedPath
-					+ '.'
-					+ fileName;
-
-			default:
-				StorageUtil.getExternalDirectory(str)
-					+ '.'
-					+ fileName;
-		}
+	function toggleFullScreen(event:KeyboardEvent) {
+		if (Controls.instance.justReleased('fullscreen'))
+			FlxG.fullscreen = !FlxG.fullscreen;
 	}
 }
-
-#end
