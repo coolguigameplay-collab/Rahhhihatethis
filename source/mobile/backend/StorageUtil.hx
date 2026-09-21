@@ -421,8 +421,12 @@ class StorageUtil
 			var entries:List<Entry> =
 				reader.read();
 
+			// IMPORTANT:
+			// The APK contains BFEXEOPT directly at the APK root.
+			// Example:
+			// BFEXEOPT/mods/NamaMod/TEST.txt
 			var prefix:String =
-				'assets/BFEXEOPT/mods/';
+				'BFEXEOPT/mods/';
 
 			var found:Int = 0;
 			var extracted:Int = 0;
