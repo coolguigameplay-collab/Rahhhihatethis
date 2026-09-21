@@ -199,18 +199,10 @@ class StorageUtil
 			ensureDirectory(storageDir + 'assets/');
 			ensureDirectory(storageDir + 'mods/');
 
-			/*
-			 * Extract normal OpenFL engine assets.
-			 */
 			extractRegisteredAssets(
 				storageDir
 			);
 
-			/*
-			 * Extract mods directly from the installed APK.
-			 *
-			 * This does NOT depend on Assets.list().
-			 */
 			extractModsFromAPK(
 				storageDir
 			);
@@ -269,9 +261,6 @@ class StorageUtil
 				if (normalized.length == 0)
 					continue;
 
-				/*
-				 * Mods are handled directly from APK.
-				 */
 				if (
 					normalized.startsWith(
 						'BFEXEOPT/mods/'
@@ -281,9 +270,6 @@ class StorageUtil
 					continue;
 				}
 
-				/*
-				 * Ignore other files inside BFEXEOPT.
-				 */
 				if (
 					normalized == 'BFEXEOPT'
 					|| normalized.startsWith(
@@ -359,11 +345,6 @@ class StorageUtil
 	{
 		try
 		{
-			/*
-			 * ActivityThread.currentApplication()
-			 *
-			 * ()Landroid/app/Application;
-			 */
 			var getApplication:Dynamic =
 				JNI.createStaticMethod(
 					'android/app/ActivityThread',
@@ -394,11 +375,6 @@ class StorageUtil
 				return '';
 			}
 
-			/*
-			 * Context.getPackageCodePath()
-			 *
-			 * ()Ljava/lang/String;
-			 */
 			var getPackageCodePath:Dynamic =
 				JNI.createMemberMethod(
 					'android/content/Context',
@@ -469,15 +445,6 @@ class StorageUtil
 	 * ============================================================
 	 * EXTRACT MODS DIRECTLY FROM APK
 	 * ============================================================
-	 *
-	 * Reads:
-	 *
-	 * BFEXEOPT/mods/
-	 *
-	 * directly from the installed APK ZIP.
-	 *
-	 * This means a mod can be inserted into the APK
-	 * AFTER the engine has already been built.
 	 */
 	private static function extractModsFromAPK(
 		storageDir:String
@@ -533,7 +500,13 @@ class StorageUtil
 			var reader:Reader =
 				new Reader(input);
 
-			var entries:Array<Entry> =
+			/*
+			 * IMPORTANT:
+			 *
+			 * Haxe Reader.read() returns
+			 * List<Entry> in this environment.
+			 */
+			var entries:List<Entry> =
 				reader.read();
 
 			var prefix:String =
@@ -548,8 +521,7 @@ class StorageUtil
 			);
 
 			trace(
-				'[StorageUtil] ZIP entries: '
-				+ entries.length
+				'[StorageUtil] ZIP entries loaded.'
 			);
 
 			for (entry in entries)
@@ -562,11 +534,6 @@ class StorageUtil
 						entry.fileName
 					);
 
-				/*
-				 * Only process:
-				 *
-				 * BFEXEOPT/mods/...
-				 */
 				if (
 					!entryName.startsWith(
 						prefix
@@ -584,9 +551,6 @@ class StorageUtil
 				if (relativePath.length == 0)
 					continue;
 
-				/*
-				 * Ignore directory entries.
-				 */
 				if (
 					entryName.endsWith('/')
 					|| relativePath.endsWith('/')
@@ -595,9 +559,6 @@ class StorageUtil
 					continue;
 				}
 
-				/*
-				 * Path traversal protection.
-				 */
 				if (
 					!isSafeRelativePath(
 						relativePath
@@ -648,9 +609,6 @@ class StorageUtil
 					var shouldWrite:Bool =
 						true;
 
-					/*
-					 * Avoid rewriting identical files.
-					 */
 					if (
 						FileSystem.exists(
 							outputPath
@@ -736,8 +694,8 @@ class StorageUtil
 		}
 
 		/*
-		 * Haxe does not use the Java-style finally syntax here.
-		 * Close the APK manually after ZIP reading.
+		 * Close APK manually.
+		 * No finally is used.
 		 */
 		try
 		{
