@@ -1,6 +1,7 @@
 package mobile.backend;
 
 import lime.system.System as LimeSystem;
+
 #if android
 import lime.system.JNI;
 #end
@@ -184,37 +185,6 @@ class StorageUtil
 	 * ============================================================
 	 * MAIN EXTRACTION
 	 * ============================================================
-	 *
-	 * Extracts:
-	 *
-	 * 1. Normal OpenFL engine assets
-	 *
-	 * 2. Mods directly from the installed APK.
-	 *
-	 * APK structure:
-	 *
-	 * BFEXEOPT/
-	 * └── mods/
-	 *     ├── BikiniHorrors/
-	 *     │   └── ...
-	 *     ├── AnotherMod/
-	 *     │   └── ...
-	 *     └── ...
-	 *
-	 * External structure:
-	 *
-	 * /storage/emulated/0/.BFEXEOPT/
-	 * ├── assets/
-	 * └── mods/
-	 *     ├── BikiniHorrors/
-	 *     └── AnotherMod/
-	 *
-	 * IMPORTANT:
-	 *
-	 * The mod does NOT need to be registered in Assets.list().
-	 *
-	 * Therefore a mod inserted into the APK AFTER BUILD
-	 * using MT Manager can still be extracted.
 	 */
 	public static function extractBundledFiles():Void
 	{
@@ -230,20 +200,16 @@ class StorageUtil
 			ensureDirectory(storageDir + 'mods/');
 
 			/*
-			 * Normal engine assets.
-			 *
-			 * This still uses OpenFL's asset system.
+			 * Extract normal OpenFL engine assets.
 			 */
 			extractRegisteredAssets(
 				storageDir
 			);
 
 			/*
-			 * IMPORTANT:
+			 * Extract mods directly from the installed APK.
 			 *
-			 * Mods are NOT read from Assets.list().
-			 *
-			 * They are read directly from the installed APK.
+			 * This does NOT depend on Assets.list().
 			 */
 			extractModsFromAPK(
 				storageDir
@@ -262,14 +228,6 @@ class StorageUtil
 	 * ============================================================
 	 * NORMAL ENGINE ASSETS
 	 * ============================================================
-	 *
-	 * Extracts normal OpenFL assets to:
-	 *
-	 * .BFEXEOPT/assets/
-	 *
-	 * BFEXEOPT/mods/ is intentionally ignored here.
-	 *
-	 * Mods are handled separately by extractModsFromAPK().
 	 */
 	private static function extractRegisteredAssets(
 		storageDir:String
@@ -396,23 +354,6 @@ class StorageUtil
 	 * ============================================================
 	 * GET INSTALLED APK PATH
 	 * ============================================================
-	 *
-	 * Android does not expose the APK path through
-	 * Lime Application.meta.
-	 *
-	 * We obtain the running Application Context through:
-	 *
-	 * android.app.ActivityThread.currentApplication()
-	 *
-	 * and then call:
-	 *
-	 * Context.getPackageCodePath()
-	 *
-	 * Example result:
-	 *
-	 * /data/app/~~xxxxx==/com.bfexeopt.engine-xxxxx==/base.apk
-	 *
-	 * This is the actual APK that Android is running.
 	 */
 	private static function getInstalledAPKPath():String
 	{
@@ -529,23 +470,14 @@ class StorageUtil
 	 * EXTRACT MODS DIRECTLY FROM APK
 	 * ============================================================
 	 *
-	 * Reads the APK as a ZIP archive.
+	 * Reads:
 	 *
-	 * This is the important part that allows:
+	 * BFEXEOPT/mods/
 	 *
-	 * Build APK
-	 *      ↓
-	 * MT Manager
-	 *      ↓
-	 * Insert BFEXEOPT/mods/MyMod/
-	 *      ↓
-	 * Repack APK
-	 *      ↓
-	 * Install
-	 *      ↓
-	 * Game reads MyMod directly from APK
+	 * directly from the installed APK ZIP.
 	 *
-	 * Assets.list() is NOT involved here.
+	 * This means a mod can be inserted into the APK
+	 * AFTER the engine has already been built.
 	 */
 	private static function extractModsFromAPK(
 		storageDir:String
@@ -631,7 +563,7 @@ class StorageUtil
 					);
 
 				/*
-				 * We only care about:
+				 * Only process:
 				 *
 				 * BFEXEOPT/mods/...
 				 */
@@ -654,8 +586,6 @@ class StorageUtil
 
 				/*
 				 * Ignore directory entries.
-				 *
-				 * Most APK ZIP directory entries end with '/'.
 				 */
 				if (
 					entryName.endsWith('/')
@@ -666,13 +596,7 @@ class StorageUtil
 				}
 
 				/*
-				 * Security:
-				 *
-				 * Never allow:
-				 *
-				 * ../
-				 * absolute paths
-				 * paths escaping mods/
+				 * Path traversal protection.
 				 */
 				if (
 					!isSafeRelativePath(
@@ -725,7 +649,7 @@ class StorageUtil
 						true;
 
 					/*
-					 * Do not rewrite identical files.
+					 * Avoid rewriting identical files.
 					 */
 					if (
 						FileSystem.exists(
@@ -810,15 +734,21 @@ class StorageUtil
 				+ e
 			);
 		}
-		finally
+
+		/*
+		 * Haxe does not use the Java-style finally syntax here.
+		 * Close the APK manually after ZIP reading.
+		 */
+		try
 		{
-			try
-			{
-				input.close();
-			}
-			catch (e:Dynamic)
-			{
-			}
+			input.close();
+		}
+		catch (e:Dynamic)
+		{
+			trace(
+				'[StorageUtil] Failed to close APK: '
+				+ e
+			);
 		}
 	}
 
@@ -899,7 +829,8 @@ class StorageUtil
 				outputDirectory
 			);
 
-			var shouldWrite:Bool = true;
+			var shouldWrite:Bool =
+				true;
 
 			if (
 				FileSystem.exists(
