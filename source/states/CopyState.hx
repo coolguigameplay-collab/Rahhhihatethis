@@ -27,7 +27,7 @@ package states;
 import states.TitleState;
 import lime.utils.Assets as LimeAssets;
 import openfl.utils.Assets as OpenFLAssets;
-import openfl.utils.ByteArray;
+import haxe.io.Bytes;
 import haxe.io.Path;
 import flixel.ui.FlxBar;
 import flixel.ui.FlxBar.FlxBarFillDirection;
@@ -142,18 +142,6 @@ class CopyState extends MusicBeatState
 			{
 				loopTimes++;
 
-				/*
-				 * Keep the original asset path here.
-				 *
-				 * Example:
-				 * BFEXEOPT/mods/FunkinAvi/pack.json
-				 *
-				 * copyAsset() will convert the destination to:
-				 * mods/FunkinAvi/pack.json
-				 *
-				 * This is important because OpenFLAssets must still
-				 * read the original BFEXEOPT/... asset.
-				 */
 				copyAsset(file);
 			}
 		});
@@ -215,22 +203,10 @@ class CopyState extends MusicBeatState
 		super.update(elapsed);
 	}
 
-	/**
-	 * Copies a bundled asset to the external game directory.
-	 *
-	 * Source example:
-	 * BFEXEOPT/mods/FunkinAvi/pack.json
-	 *
-	 * Destination example:
-	 * mods/FunkinAvi/pack.json
-	 */
 	public function copyAsset(file:String)
 	{
 		var outputFile:String = getOutputPath(file);
 
-		/*
-		 * If the destination already exists, do not copy it again.
-		 */
 		if (FileSystem.exists(outputFile))
 			return;
 
@@ -241,17 +217,6 @@ class CopyState extends MusicBeatState
 
 		try
 		{
-			/*
-			 * IMPORTANT:
-			 *
-			 * getFile(file) receives the ORIGINAL source path.
-			 *
-			 * Therefore:
-			 * BFEXEOPT/mods/FunkinAvi/file.png
-			 *
-			 * is still looked up as:
-			 * BFEXEOPT/mods/FunkinAvi/file.png
-			 */
 			var sourceFile:String = getFile(file);
 
 			if (OpenFLAssets.exists(sourceFile))
@@ -267,7 +232,7 @@ class CopyState extends MusicBeatState
 				}
 				else
 				{
-					var bytes:ByteArray =
+					var bytes:Bytes =
 						getFileBytes(sourceFile);
 
 					File.saveBytes(
@@ -302,19 +267,6 @@ class CopyState extends MusicBeatState
 		}
 	}
 
-	/**
-	 * Converts the bundled BFEXEOPT path into the
-	 * actual external storage destination.
-	 *
-	 * BFEXEOPT/mods/FunkinAvi/file
-	 * ->
-	 * mods/FunkinAvi/file
-	 *
-	 * Normal assets such as:
-	 * assets/images/file.png
-	 *
-	 * remain unchanged.
-	 */
 	private static function getOutputPath(file:String):String
 	{
 		if (file.startsWith('BFEXEOPT/'))
@@ -325,15 +277,6 @@ class CopyState extends MusicBeatState
 		return file;
 	}
 
-	/**
-	 * Writes text-based bundled files.
-	 *
-	 * sourceFile:
-	 * BFEXEOPT/mods/FunkinAvi/pack.json
-	 *
-	 * outputFile:
-	 * mods/FunkinAvi/pack.json
-	 */
 	public function createContentFromInternal(
 		sourceFile:String,
 		outputFile:String
@@ -372,13 +315,10 @@ class CopyState extends MusicBeatState
 		}
 	}
 
-	public function getFileBytes(file:String):ByteArray
+	public function getFileBytes(file:String):Bytes
 	{
 		switch (Path.extension(file).toLowerCase())
 		{
-			case 'otf' | 'ttf':
-				return ByteArray.fromFile(file);
-
 			default:
 				return OpenFLAssets.getBytes(file);
 		}
@@ -406,43 +346,20 @@ class CopyState extends MusicBeatState
 		return file;
 	}
 
-	/**
-	 * Finds bundled assets that still need to be copied.
-	 *
-	 * Normal game assets:
-	 * assets/...
-	 *
-	 * Bundled BFEXEOPT mods:
-	 * BFEXEOPT/mods/...
-	 */
 	public static function checkExistingFiles():Bool
 	{
 		locatedFiles = OpenFLAssets.list();
 
-		/*
-		 * Normal assets used by CopyState.
-		 */
 		var assets = locatedFiles.filter(
 			folder -> folder.startsWith('assets/')
 		);
 
-		/*
-		 * BFEXEOPT bundled mods.
-		 *
-		 * These are intentionally kept with the
-		 * BFEXEOPT/ prefix here so OpenFLAssets can
-		 * correctly read the source file.
-		 */
 		var mods = locatedFiles.filter(
 			folder -> folder.startsWith('BFEXEOPT/mods/')
 		);
 
 		locatedFiles = assets.concat(mods);
 
-		/*
-		 * Check the DESTINATION path, not the source
-		 * BFEXEOPT path.
-		 */
 		locatedFiles = locatedFiles.filter(
 			file -> !FileSystem.exists(
 				getOutputPath(file)
@@ -491,10 +408,6 @@ class CopyState extends MusicBeatState
 		return (maxLoopTimes <= 0);
 	}
 
-	/**
-	 * Creates a directory and all missing parent
-	 * directories.
-	 */
 	private static function ensureDirectory(
 		directory:String
 	):Void
