@@ -316,9 +316,6 @@ class StorageUtil
 		{
 			#if android
 
-			var apkPath:String =
-				LimeSystem.applicationStorageDirectory;
-
 			var packageCodePath:Dynamic =
 				lime.app.Application.current.meta
 					.get('packageCodePath');
@@ -592,17 +589,15 @@ class StorageUtil
 				+ e
 			);
 		}
-		finally
+
+		if (input != null)
 		{
-			if (input != null)
+			try
 			{
-				try
-				{
-					input.close();
-				}
-				catch (_:Dynamic)
-				{
-				}
+				input.close();
+			}
+			catch (e:Dynamic)
+			{
 			}
 		}
 	}
