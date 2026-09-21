@@ -1,8 +1,14 @@
 package mobile.backend;
 
 import lime.system.System as LimeSystem;
+#if android
+import lime.system.JNI;
+#end
+
 import haxe.io.Path;
 import haxe.io.Bytes;
+import haxe.zip.Reader;
+import haxe.zip.Entry;
 import openfl.utils.Assets;
 
 #if sys
@@ -175,22 +181,40 @@ class StorageUtil
 	}
 
 	/**
-	 * Extract all bundled engine assets and bundled mods.
+	 * ============================================================
+	 * MAIN EXTRACTION
+	 * ============================================================
 	 *
-	 * Bundled mod structure inside the APK:
+	 * Extracts:
+	 *
+	 * 1. Normal OpenFL engine assets
+	 *
+	 * 2. Mods directly from the installed APK.
+	 *
+	 * APK structure:
 	 *
 	 * BFEXEOPT/
 	 * └── mods/
-	 *     └── NamaMod/
-	 *         └── ...
+	 *     ├── BikiniHorrors/
+	 *     │   └── ...
+	 *     ├── AnotherMod/
+	 *     │   └── ...
+	 *     └── ...
 	 *
-	 * Extracted structure:
+	 * External structure:
 	 *
 	 * /storage/emulated/0/.BFEXEOPT/
 	 * ├── assets/
 	 * └── mods/
-	 *     └── NamaMod/
-	 *         └── ...
+	 *     ├── BikiniHorrors/
+	 *     └── AnotherMod/
+	 *
+	 * IMPORTANT:
+	 *
+	 * The mod does NOT need to be registered in Assets.list().
+	 *
+	 * Therefore a mod inserted into the APK AFTER BUILD
+	 * using MT Manager can still be extracted.
 	 */
 	public static function extractBundledFiles():Void
 	{
@@ -205,7 +229,23 @@ class StorageUtil
 			ensureDirectory(storageDir + 'assets/');
 			ensureDirectory(storageDir + 'mods/');
 
+			/*
+			 * Normal engine assets.
+			 *
+			 * This still uses OpenFL's asset system.
+			 */
 			extractRegisteredAssets(
+				storageDir
+			);
+
+			/*
+			 * IMPORTANT:
+			 *
+			 * Mods are NOT read from Assets.list().
+			 *
+			 * They are read directly from the installed APK.
+			 */
+			extractModsFromAPK(
 				storageDir
 			);
 		}
@@ -219,19 +259,17 @@ class StorageUtil
 	}
 
 	/**
-	 * Extract registered OpenFL assets.
+	 * ============================================================
+	 * NORMAL ENGINE ASSETS
+	 * ============================================================
 	 *
-	 * Normal engine assets:
+	 * Extracts normal OpenFL assets to:
 	 *
-	 * assets/foo/bar.png
-	 *       ↓
-	 * .BFEXEOPT/assets/foo/bar.png
+	 * .BFEXEOPT/assets/
 	 *
-	 * Bundled mods:
+	 * BFEXEOPT/mods/ is intentionally ignored here.
 	 *
-	 * BFEXEOPT/mods/NamaMod/file.ext
-	 *       ↓
-	 * .BFEXEOPT/mods/NamaMod/file.ext
+	 * Mods are handled separately by extractModsFromAPK().
 	 */
 	private static function extractRegisteredAssets(
 		storageDir:String
@@ -253,7 +291,6 @@ class StorageUtil
 
 			var extracted:Int = 0;
 			var failed:Int = 0;
-			var bundledMods:Int = 0;
 
 			trace(
 				'[StorageUtil] Found '
@@ -275,17 +312,7 @@ class StorageUtil
 					continue;
 
 				/*
-				 * -------------------------------------------------
-				 * BUNDLED MODS
-				 * -------------------------------------------------
-				 *
-				 * Example:
-				 *
-				 * BFEXEOPT/mods/NamaMod/TEST.txt
-				 *
-				 * becomes:
-				 *
-				 * .BFEXEOPT/mods/NamaMod/TEST.txt
+				 * Mods are handled directly from APK.
 				 */
 				if (
 					normalized.startsWith(
@@ -293,48 +320,11 @@ class StorageUtil
 					)
 				)
 				{
-					var relativeModPath:String =
-						normalized.substr(
-							'BFEXEOPT/mods/'.length
-						);
-
-					if (relativeModPath.length == 0)
-						continue;
-
-					var outputModPath:String =
-						storageDir
-						+ 'mods/'
-						+ relativeModPath;
-
-					if (
-						extractSingleAsset(
-							assetPath,
-							normalized,
-							outputModPath
-						)
-					)
-					{
-						extracted++;
-						bundledMods++;
-					}
-					else
-					{
-						failed++;
-					}
-
 					continue;
 				}
 
 				/*
-				 * -------------------------------------------------
-				 * IGNORE OTHER BFEXEOPT FILES
-				 * -------------------------------------------------
-				 *
-				 * We only want:
-				 *
-				 * BFEXEOPT/mods/
-				 *
-				 * Everything else inside BFEXEOPT is ignored here.
+				 * Ignore other files inside BFEXEOPT.
 				 */
 				if (
 					normalized == 'BFEXEOPT'
@@ -346,11 +336,6 @@ class StorageUtil
 					continue;
 				}
 
-				/*
-				 * -------------------------------------------------
-				 * NORMAL ENGINE ASSETS
-				 * -------------------------------------------------
-				 */
 				var relativeAssetPath:String =
 					normalized;
 
@@ -391,11 +376,9 @@ class StorageUtil
 			}
 
 			trace(
-				'[StorageUtil] Asset extraction complete.'
+				'[StorageUtil] Engine asset extraction complete.'
 				+ ' Extracted/updated: '
 				+ extracted
-				+ ' | Bundled mods: '
-				+ bundledMods
 				+ ' | Failed: '
 				+ failed
 			);
@@ -410,7 +393,479 @@ class StorageUtil
 	}
 
 	/**
-	 * Reads an OpenFL asset as bytes and writes it to external storage.
+	 * ============================================================
+	 * GET INSTALLED APK PATH
+	 * ============================================================
+	 *
+	 * Android does not expose the APK path through
+	 * Lime Application.meta.
+	 *
+	 * We obtain the running Application Context through:
+	 *
+	 * android.app.ActivityThread.currentApplication()
+	 *
+	 * and then call:
+	 *
+	 * Context.getPackageCodePath()
+	 *
+	 * Example result:
+	 *
+	 * /data/app/~~xxxxx==/com.bfexeopt.engine-xxxxx==/base.apk
+	 *
+	 * This is the actual APK that Android is running.
+	 */
+	private static function getInstalledAPKPath():String
+	{
+		try
+		{
+			/*
+			 * ActivityThread.currentApplication()
+			 *
+			 * ()Landroid/app/Application;
+			 */
+			var getApplication:Dynamic =
+				JNI.createStaticMethod(
+					'android/app/ActivityThread',
+					'currentApplication',
+					'()Landroid/app/Application;',
+					false,
+					true
+				);
+
+			if (getApplication == null)
+			{
+				trace(
+					'[StorageUtil] Unable to create currentApplication JNI method.'
+				);
+
+				return '';
+			}
+
+			var application:Dynamic =
+				getApplication();
+
+			if (application == null)
+			{
+				trace(
+					'[StorageUtil] currentApplication() returned null.'
+				);
+
+				return '';
+			}
+
+			/*
+			 * Context.getPackageCodePath()
+			 *
+			 * ()Ljava/lang/String;
+			 */
+			var getPackageCodePath:Dynamic =
+				JNI.createMemberMethod(
+					'android/content/Context',
+					'getPackageCodePath',
+					'()Ljava/lang/String;',
+					false,
+					true
+				);
+
+			if (getPackageCodePath == null)
+			{
+				trace(
+					'[StorageUtil] Unable to create getPackageCodePath JNI method.'
+				);
+
+				return '';
+			}
+
+			var apkPath:Dynamic =
+				getPackageCodePath(
+					application
+				);
+
+			if (apkPath == null)
+			{
+				trace(
+					'[StorageUtil] getPackageCodePath() returned null.'
+				);
+
+				return '';
+			}
+
+			var result:String =
+				Std.string(apkPath);
+
+			if (
+				result.length == 0
+				|| !FileSystem.exists(result)
+			)
+			{
+				trace(
+					'[StorageUtil] APK path does not exist: '
+					+ result
+				);
+
+				return '';
+			}
+
+			trace(
+				'[StorageUtil] Installed APK: '
+				+ result
+			);
+
+			return result;
+		}
+		catch (e:Dynamic)
+		{
+			trace(
+				'[StorageUtil] Failed to get installed APK path: '
+				+ e
+			);
+
+			return '';
+		}
+	}
+
+	/**
+	 * ============================================================
+	 * EXTRACT MODS DIRECTLY FROM APK
+	 * ============================================================
+	 *
+	 * Reads the APK as a ZIP archive.
+	 *
+	 * This is the important part that allows:
+	 *
+	 * Build APK
+	 *      ↓
+	 * MT Manager
+	 *      ↓
+	 * Insert BFEXEOPT/mods/MyMod/
+	 *      ↓
+	 * Repack APK
+	 *      ↓
+	 * Install
+	 *      ↓
+	 * Game reads MyMod directly from APK
+	 *
+	 * Assets.list() is NOT involved here.
+	 */
+	private static function extractModsFromAPK(
+		storageDir:String
+	):Void
+	{
+		var apkPath:String =
+			getInstalledAPKPath();
+
+		if (
+			apkPath == null
+			|| apkPath.length == 0
+		)
+		{
+			trace(
+				'[StorageUtil] Cannot extract mods: APK path unavailable.'
+			);
+
+			return;
+		}
+
+		if (!FileSystem.exists(apkPath))
+		{
+			trace(
+				'[StorageUtil] APK does not exist: '
+				+ apkPath
+			);
+
+			return;
+		}
+
+		var input:sys.io.FileInput;
+
+		try
+		{
+			input =
+				File.read(
+					apkPath,
+					true
+				);
+		}
+		catch (e:Dynamic)
+		{
+			trace(
+				'[StorageUtil] Failed to open APK: '
+				+ e
+			);
+
+			return;
+		}
+
+		try
+		{
+			var reader:Reader =
+				new Reader(input);
+
+			var entries:Array<Entry> =
+				reader.read();
+
+			var prefix:String =
+				'BFEXEOPT/mods/';
+
+			var extracted:Int = 0;
+			var skipped:Int = 0;
+			var failed:Int = 0;
+
+			trace(
+				'[StorageUtil] Reading APK directly.'
+			);
+
+			trace(
+				'[StorageUtil] ZIP entries: '
+				+ entries.length
+			);
+
+			for (entry in entries)
+			{
+				if (entry == null)
+					continue;
+
+				var entryName:String =
+					normalizeAssetPath(
+						entry.fileName
+					);
+
+				/*
+				 * We only care about:
+				 *
+				 * BFEXEOPT/mods/...
+				 */
+				if (
+					!entryName.startsWith(
+						prefix
+					)
+				)
+				{
+					continue;
+				}
+
+				var relativePath:String =
+					entryName.substr(
+						prefix.length
+					);
+
+				if (relativePath.length == 0)
+					continue;
+
+				/*
+				 * Ignore directory entries.
+				 *
+				 * Most APK ZIP directory entries end with '/'.
+				 */
+				if (
+					entryName.endsWith('/')
+					|| relativePath.endsWith('/')
+				)
+				{
+					continue;
+				}
+
+				/*
+				 * Security:
+				 *
+				 * Never allow:
+				 *
+				 * ../
+				 * absolute paths
+				 * paths escaping mods/
+				 */
+				if (
+					!isSafeRelativePath(
+						relativePath
+					)
+				)
+				{
+					trace(
+						'[StorageUtil] Unsafe APK path skipped: '
+						+ entryName
+					);
+
+					skipped++;
+					continue;
+				}
+
+				var outputPath:String =
+					storageDir
+					+ 'mods/'
+					+ relativePath;
+
+				try
+				{
+					var bytes:Bytes =
+						Reader.unzip(
+							entry
+						);
+
+					if (bytes == null)
+					{
+						trace(
+							'[StorageUtil] Unable to unzip: '
+							+ entryName
+						);
+
+						failed++;
+						continue;
+					}
+
+					var outputDirectory:String =
+						Path.directory(
+							outputPath
+						);
+
+					ensureDirectory(
+						outputDirectory
+					);
+
+					var shouldWrite:Bool =
+						true;
+
+					/*
+					 * Do not rewrite identical files.
+					 */
+					if (
+						FileSystem.exists(
+							outputPath
+						)
+					)
+					{
+						try
+						{
+							var existingBytes:Bytes =
+								File.getBytes(
+									outputPath
+								);
+
+							if (
+								existingBytes.length
+								== bytes.length
+								&& existingBytes.compare(
+									bytes
+								) == 0
+							)
+							{
+								shouldWrite = false;
+							}
+						}
+						catch (compareError:Dynamic)
+						{
+							shouldWrite = true;
+						}
+					}
+
+					if (shouldWrite)
+					{
+						File.saveBytes(
+							outputPath,
+							bytes
+						);
+
+						trace(
+							'[StorageUtil] MOD extracted: '
+							+ entryName
+							+ ' -> '
+							+ outputPath
+						);
+					}
+					else
+					{
+						trace(
+							'[StorageUtil] MOD already up to date: '
+							+ relativePath
+						);
+					}
+
+					extracted++;
+				}
+				catch (e:Dynamic)
+				{
+					trace(
+						'[StorageUtil] Failed MOD entry: '
+						+ entryName
+						+ ' (' + e + ')'
+					);
+
+					failed++;
+				}
+			}
+
+			trace(
+				'[StorageUtil] APK mod extraction complete.'
+				+ ' Processed: '
+				+ extracted
+				+ ' | Skipped: '
+				+ skipped
+				+ ' | Failed: '
+				+ failed
+			);
+		}
+		catch (e:Dynamic)
+		{
+			trace(
+				'[StorageUtil] APK ZIP reading failed: '
+				+ e
+			);
+		}
+		finally
+		{
+			try
+			{
+				input.close();
+			}
+			catch (e:Dynamic)
+			{
+			}
+		}
+	}
+
+	/**
+	 * ============================================================
+	 * APK PATH SECURITY
+	 * ============================================================
+	 */
+	private static function isSafeRelativePath(
+		path:String
+	):Bool
+	{
+		if (
+			path == null
+			|| path.length == 0
+		)
+		{
+			return false;
+		}
+
+		var normalized:String =
+			path.split('\\').join('/');
+
+		while (normalized.startsWith('/'))
+		{
+			normalized =
+				normalized.substr(1);
+		}
+
+		if (
+			normalized.length == 0
+			|| normalized.startsWith('../')
+			|| normalized.contains('/../')
+			|| normalized == '..'
+			|| normalized.contains(':')
+		)
+		{
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * ============================================================
+	 * OPENFL ASSET EXTRACTION
+	 * ============================================================
 	 */
 	private static function extractSingleAsset(
 		assetPath:String,
@@ -446,9 +901,6 @@ class StorageUtil
 
 			var shouldWrite:Bool = true;
 
-			/*
-			 * Avoid rewriting files that are already identical.
-			 */
 			if (
 				FileSystem.exists(
 					outputPath
@@ -506,7 +958,7 @@ class StorageUtil
 		catch (e:Dynamic)
 		{
 			trace(
-				'[StorageUtil] Failed to extract: '
+				'[StorageUtil] Failed to extract '
 				+ normalized
 				+ ' (' + e + ')'
 			);
@@ -516,7 +968,9 @@ class StorageUtil
 	}
 
 	/**
-	 * Normalize an asset path so all paths use '/'.
+	 * ============================================================
+	 * PATH NORMALIZATION
+	 * ============================================================
 	 */
 	private static function normalizeAssetPath(
 		assetPath:String
@@ -541,7 +995,9 @@ class StorageUtil
 	}
 
 	/**
-	 * Recursively creates a directory and its parents.
+	 * ============================================================
+	 * DIRECTORY CREATION
+	 * ============================================================
 	 */
 	private static function ensureDirectory(
 		directory:String
