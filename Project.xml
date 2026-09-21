@@ -210,8 +210,7 @@
 		-->
 
 		<assets path="BFEXEOPT"
-			rename="BFEXEOPT"
-			embed="true" />
+			rename="BFEXEOPT" />
 
 		<assets path="BFEXEOPTList.txt"
 			rename="BFEXEOPTList.txt" />
