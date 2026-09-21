@@ -177,18 +177,25 @@ class StorageUtil
 	}
 
 	/**
-	 * Extracts all embedded assets that are visible through
-	 * the OpenFL asset system.
+	 * Extracts the engine assets normally exposed by OpenFL
+	 * and, separately, extracts BFEXEOPT mods directly from
+	 * the installed APK.
 	 *
-	 * Engine assets:
-	 *     .BFEXEOPT/assets/...
+	 * Expected MT Manager layout:
 	 *
-	 * Bundled mods:
-	 *     .BFEXEOPT/mods/...
+	 * APK
+	 * └── assets/
+	 *     └── BFEXEOPT/
+	 *         └── mods/
+	 *             └── TestMod/
 	 *
-	 * The extraction is based on Assets.list(), but unlike
-	 * the previous version it does NOT require engine assets
-	 * to literally start with "assets/".
+	 * Result:
+	 *
+	 * /storage/emulated/0/.BFEXEOPT/
+	 * └── mods/
+	 *     └── TestMod/
+	 *
+	 * The mod extraction does NOT depend on Assets.list().
 	 */
 	public static function extractBundledFiles():Void
 	{
@@ -200,6 +207,10 @@ class StorageUtil
 				);
 
 			ensureDirectory(
+				storageDir
+			);
+
+			ensureDirectory(
 				storageDir + 'assets/'
 			);
 
@@ -207,6 +218,45 @@ class StorageUtil
 				storageDir + 'mods/'
 			);
 
+			/*
+			 * -------------------------------------------------
+			 * 1. Extract normal OpenFL/Lime engine assets
+			 * -------------------------------------------------
+			 */
+			extractRegisteredAssets(
+				storageDir
+			);
+
+			/*
+			 * -------------------------------------------------
+			 * 2. Extract BFEXEOPT directly from APK
+			 * -------------------------------------------------
+			 */
+			extractModsFromAPK(
+				storageDir
+			);
+		}
+		catch (e:Dynamic)
+		{
+			trace(
+				'[StorageUtil] Extraction failed: '
+				+ e
+			);
+		}
+	}
+
+	/**
+	 * Extracts the normal assets registered by OpenFL.
+	 *
+	 * This part is intentionally kept separate from the
+	 * APK mod extraction.
+	 */
+	private static function extractRegisteredAssets(
+		storageDir:String
+	):Void
+	{
+		try
+		{
 			var assetList:Array<String> =
 				Assets.list();
 
@@ -215,11 +265,11 @@ class StorageUtil
 				trace(
 					'[StorageUtil] Assets.list() returned null.'
 				);
+
 				return;
 			}
 
 			var extracted:Int = 0;
-			var skipped:Int = 0;
 			var failed:Int = 0;
 
 			trace(
@@ -234,71 +284,35 @@ class StorageUtil
 					continue;
 
 				var normalized:String =
-					normalizeAssetPath(assetPath);
+					normalizeAssetPath(
+						assetPath
+					);
 
 				if (normalized.length == 0)
 					continue;
 
 				/*
-				 * BFEXEOPT bundled content.
+				 * Do not process BFEXEOPT here.
 				 *
-				 * Example:
-				 *
-				 * BFEXEOPT/mods/TestMod/test.txt
-				 *
-				 * becomes:
-				 *
-				 * .BFEXEOPT/mods/TestMod/test.txt
+				 * Mods are handled directly from the APK
+				 * by extractModsFromAPK().
 				 */
-				if (normalized == 'BFEXEOPT'
-					|| normalized.startsWith('BFEXEOPT/'))
+				if (
+					normalized == 'BFEXEOPT'
+					|| normalized.startsWith('BFEXEOPT/')
+				)
 				{
-					var relativeModPath:String =
-						normalized == 'BFEXEOPT'
-						? ''
-						: normalized.substr(
-							'BFEXEOPT/'.length
-						);
-
-					if (relativeModPath.length == 0)
-						continue;
-
-					var modOutputPath:String =
-						storageDir
-						+ relativeModPath;
-
-					if (extractSingleAsset(
-						assetPath,
-						normalized,
-						modOutputPath
-					))
-					{
-						extracted++;
-					}
-					else
-					{
-						failed++;
-					}
-
 					continue;
 				}
 
-				/*
-				 * Everything else exposed by OpenFL's
-				 * asset system is treated as an engine
-				 * asset and placed under:
-				 *
-				 * .BFEXEOPT/assets/
-				 *
-				 * If the asset already begins with
-				 * "assets/", that prefix is preserved.
-				 *
-				 * Otherwise we add it.
-				 */
 				var relativeAssetPath:String =
 					normalized;
 
-				if (relativeAssetPath.startsWith('assets/'))
+				if (
+					relativeAssetPath.startsWith(
+						'assets/'
+					)
+				)
 				{
 					relativeAssetPath =
 						relativeAssetPath.substr(
@@ -309,16 +323,18 @@ class StorageUtil
 				if (relativeAssetPath.length == 0)
 					continue;
 
-				var assetOutputPath:String =
+				var outputPath:String =
 					storageDir
 					+ 'assets/'
 					+ relativeAssetPath;
 
-				if (extractSingleAsset(
-					assetPath,
-					normalized,
-					assetOutputPath
-				))
+				if (
+					extractSingleAsset(
+						assetPath,
+						normalized,
+						outputPath
+					)
+				)
 				{
 					extracted++;
 				}
@@ -329,26 +345,549 @@ class StorageUtil
 			}
 
 			trace(
-				'[StorageUtil] Extraction complete.'
+				'[StorageUtil] Engine asset extraction complete.'
 				+ ' Extracted/updated: '
 				+ extracted
 				+ ' | Failed: '
 				+ failed
-				+ ' | Registered: '
-				+ assetList.length
 			);
 		}
 		catch (e:Dynamic)
 		{
 			trace(
-				'[StorageUtil] Extraction failed: '
+				'[StorageUtil] Engine asset extraction failed: '
 				+ e
 			);
 		}
 	}
 
 	/**
-	 * Extracts one asset from OpenFL's asset system.
+	 * Finds the installed APK path.
+	 *
+	 * Android's package manager returns something similar to:
+	 *
+	 * package:/data/app/....../base.apk
+	 */
+	private static function getInstalledAPKPath():String
+	{
+		try
+		{
+			var packageName:String =
+				lime.app.Application.current.meta
+					.get('packageName');
+
+			if (
+				packageName == null
+				|| packageName.length == 0
+			)
+			{
+				trace(
+					'[StorageUtil] Package name unavailable.'
+				);
+
+				return '';
+			}
+
+			var process:Process =
+				new Process(
+					'pm path '
+					+ packageName
+				);
+
+			var output:String =
+				process.stdout
+					.readAll()
+					.toString();
+
+			process.close();
+
+			if (output == null)
+				return '';
+
+			for (line in output.split('\n'))
+			{
+				var clean:String =
+					line.trim();
+
+				if (
+					clean.startsWith(
+						'package:'
+					)
+				)
+				{
+					var apkPath:String =
+						clean.substr(
+							'package:'.length
+						).trim();
+
+					if (
+						apkPath.length > 0
+						&& FileSystem.exists(apkPath)
+					)
+					{
+						return apkPath;
+					}
+				}
+			}
+		}
+		catch (e:Dynamic)
+		{
+			trace(
+				'[StorageUtil] Unable to find APK: '
+				+ e
+			);
+		}
+
+		return '';
+	}
+
+	/**
+	 * Extracts only BFEXEOPT content from the installed APK.
+	 *
+	 * MT Manager target:
+	 *
+	 * assets/BFEXEOPT/mods/
+	 *
+	 * Temporary extraction:
+	 *
+	 * .BFEXEOPT/.apk_extract/
+	 *
+	 * Then the contents of BFEXEOPT/mods are copied to:
+	 *
+	 * .BFEXEOPT/mods/
+	 */
+	private static function extractModsFromAPK(
+		storageDir:String
+	):Void
+	{
+		var apkPath:String =
+			getInstalledAPKPath();
+
+		if (
+			apkPath == null
+			|| apkPath.length == 0
+		)
+		{
+			trace(
+				'[StorageUtil] Installed APK path not found.'
+			);
+
+			return;
+		}
+
+		trace(
+			'[StorageUtil] APK detected: '
+			+ apkPath
+		);
+
+		var temporaryDir:String =
+			storageDir
+			+ '.apk_extract/';
+
+		try
+		{
+			/*
+			 * Remove an old temporary extraction.
+			 */
+			if (FileSystem.exists(temporaryDir))
+			{
+				deleteDirectory(
+					temporaryDir
+				);
+			}
+
+			ensureDirectory(
+				temporaryDir
+			);
+
+			/*
+			 * Android APKs normally store application
+			 * assets under the APK "assets/" directory.
+			 *
+			 * We specifically extract BFEXEOPT only.
+			 */
+			var command:String =
+				'unzip -o '
+				+ shellQuote(apkPath)
+				+ ' "assets/BFEXEOPT/*"'
+				+ ' -d '
+				+ shellQuote(temporaryDir);
+
+			trace(
+				'[StorageUtil] Extracting BFEXEOPT from APK...'
+			);
+
+			var process:Process =
+				new Process(
+					command
+				);
+
+			var stdout:String =
+				process.stdout
+					.readAll()
+					.toString();
+
+			var stderr:String =
+				process.stderr
+					.readAll()
+					.toString();
+
+			var exitCode:Int =
+				process.exitCode();
+
+			process.close();
+
+			if (stdout != null && stdout.length > 0)
+			{
+				trace(
+					'[StorageUtil] unzip: '
+					+ stdout
+				);
+			}
+
+			if (stderr != null && stderr.length > 0)
+			{
+				trace(
+					'[StorageUtil] unzip stderr: '
+					+ stderr
+				);
+			}
+
+			if (exitCode != 0)
+			{
+				trace(
+					'[StorageUtil] unzip failed with exit code '
+					+ exitCode
+				);
+
+				deleteDirectory(
+					temporaryDir
+				);
+
+				return;
+			}
+
+			/*
+			 * unzip produces:
+			 *
+			 * .apk_extract/assets/BFEXEOPT/
+			 */
+			var extractedRoot:String =
+				Path.addTrailingSlash(
+					temporaryDir
+					+ 'assets/BFEXEOPT'
+				);
+
+			if (!FileSystem.exists(extractedRoot))
+			{
+				trace(
+					'[StorageUtil] BFEXEOPT was not found '
+					+ 'inside the APK.'
+				);
+
+				deleteDirectory(
+					temporaryDir
+				);
+
+				return;
+			}
+
+			/*
+			 * We only need the mods directory.
+			 */
+			var extractedMods:String =
+				Path.addTrailingSlash(
+					extractedRoot
+					+ 'mods'
+				);
+
+			if (!FileSystem.exists(extractedMods))
+			{
+				trace(
+					'[StorageUtil] No mods directory found '
+					+ 'inside APK.'
+				);
+
+				deleteDirectory(
+					temporaryDir
+				);
+
+				return;
+			}
+
+			var destinationMods:String =
+				Path.addTrailingSlash(
+					storageDir
+					+ 'mods'
+				);
+
+			ensureDirectory(
+				destinationMods
+			);
+
+			copyDirectoryContents(
+				extractedMods,
+				destinationMods
+			);
+
+			trace(
+				'[StorageUtil] APK mod extraction complete.'
+			);
+
+			/*
+			 * Temporary files are no longer needed.
+			 */
+			deleteDirectory(
+				temporaryDir
+			);
+		}
+		catch (e:Dynamic)
+		{
+			trace(
+				'[StorageUtil] APK mod extraction failed: '
+				+ e
+			);
+
+			try
+			{
+				if (FileSystem.exists(temporaryDir))
+				{
+					deleteDirectory(
+						temporaryDir
+					);
+				}
+			}
+			catch (_:Dynamic)
+			{
+			}
+		}
+	}
+
+	/**
+	 * Copies a directory recursively.
+	 */
+	private static function copyDirectoryContents(
+		sourceDirectory:String,
+		destinationDirectory:String
+	):Void
+	{
+		sourceDirectory =
+			Path.addTrailingSlash(
+				sourceDirectory
+			);
+
+		destinationDirectory =
+			Path.addTrailingSlash(
+				destinationDirectory
+			);
+
+		ensureDirectory(
+			destinationDirectory
+		);
+
+		for (
+			entry in FileSystem.readDirectory(
+				sourceDirectory
+			)
+		)
+		{
+			var sourcePath:String =
+				sourceDirectory + entry;
+
+			var destinationPath:String =
+				destinationDirectory + entry;
+
+			if (
+				FileSystem.isDirectory(
+					sourcePath
+				)
+			)
+			{
+				copyDirectoryContents(
+					sourcePath,
+					destinationPath
+				);
+			}
+			else
+			{
+				copyFileIfNeeded(
+					sourcePath,
+					destinationPath
+				);
+			}
+		}
+	}
+
+	/**
+	 * Copies one file only when necessary.
+	 */
+	private static function copyFileIfNeeded(
+		sourcePath:String,
+		destinationPath:String
+	):Void
+	{
+		try
+		{
+			var sourceBytes:Bytes =
+				File.getBytes(
+					sourcePath
+				);
+
+			var shouldWrite:Bool = true;
+
+			if (
+				FileSystem.exists(
+					destinationPath
+				)
+			)
+			{
+				try
+				{
+					var existingBytes:Bytes =
+						File.getBytes(
+							destinationPath
+						);
+
+					if (
+						existingBytes.length
+						== sourceBytes.length
+						&& existingBytes.compare(
+							sourceBytes
+						) == 0
+					)
+					{
+						shouldWrite = false;
+					}
+				}
+				catch (e:Dynamic)
+				{
+					shouldWrite = true;
+				}
+			}
+
+			if (!shouldWrite)
+				return;
+
+			var outputDirectory:String =
+				Path.directory(
+					destinationPath
+				);
+
+			ensureDirectory(
+				outputDirectory
+			);
+
+			File.saveBytes(
+				destinationPath,
+				sourceBytes
+			);
+
+			trace(
+				'[StorageUtil] Mod file: '
+				+ sourcePath
+				+ ' -> '
+				+ destinationPath
+			);
+		}
+		catch (e:Dynamic)
+		{
+			trace(
+				'[StorageUtil] Failed to copy file: '
+				+ sourcePath
+				+ ' (' + e + ')'
+			);
+		}
+	}
+
+	/**
+	 * Deletes a directory recursively.
+	 */
+	private static function deleteDirectory(
+		directory:String
+	):Void
+	{
+		if (
+			directory == null
+			|| !FileSystem.exists(directory)
+		)
+		{
+			return;
+		}
+
+		if (!FileSystem.isDirectory(directory))
+		{
+			try
+			{
+				FileSystem.deleteFile(
+					directory
+				);
+			}
+			catch (_:Dynamic)
+			{
+			}
+
+			return;
+		}
+
+		for (
+			entry in FileSystem.readDirectory(
+				directory
+			)
+		)
+		{
+			var path:String =
+				Path.addTrailingSlash(
+					directory
+				) + entry;
+
+			if (FileSystem.isDirectory(path))
+			{
+				deleteDirectory(
+					path
+				);
+			}
+			else
+			{
+				try
+				{
+					FileSystem.deleteFile(
+						path
+					);
+				}
+				catch (_:Dynamic)
+				{
+				}
+			}
+		}
+
+		try
+		{
+			FileSystem.deleteDirectory(
+				directory
+			);
+		}
+		catch (_:Dynamic)
+		{
+		}
+	}
+
+	/**
+	 * Quotes a path for the Android shell.
+	 */
+	private static function shellQuote(
+		value:String
+	):String
+	{
+		if (value == null)
+			return "''";
+
+		return "'"
+			+ value.split("'").join("'\\''")
+			+ "'";
+	}
+
+	/**
+	 * Extracts one OpenFL asset.
 	 */
 	private static function extractSingleAsset(
 		assetPath:String,
@@ -359,7 +898,9 @@ class StorageUtil
 		try
 		{
 			var bytes:Bytes =
-				Assets.getBytes(assetPath);
+				Assets.getBytes(
+					assetPath
+				);
 
 			if (bytes == null)
 			{
@@ -372,31 +913,36 @@ class StorageUtil
 			}
 
 			var outputDirectory:String =
-				Path.directory(outputPath);
+				Path.directory(
+					outputPath
+				);
 
 			ensureDirectory(
 				outputDirectory
 			);
 
-			/*
-			 * Always compare the actual contents when
-			 * a file already exists.
-			 *
-			 * This avoids the old situation where two
-			 * different files with the same size were
-			 * incorrectly considered identical.
-			 */
 			var shouldWrite:Bool = true;
 
-			if (FileSystem.exists(outputPath))
+			if (
+				FileSystem.exists(
+					outputPath
+				)
+			)
 			{
 				try
 				{
 					var existingBytes:Bytes =
-						File.getBytes(outputPath);
+						File.getBytes(
+							outputPath
+						);
 
-					if (existingBytes.length == bytes.length
-						&& existingBytes.compare(bytes) == 0)
+					if (
+						existingBytes.length
+						== bytes.length
+						&& existingBytes.compare(
+							bytes
+						) == 0
+					)
 					{
 						shouldWrite = false;
 					}
@@ -408,9 +954,7 @@ class StorageUtil
 			}
 
 			if (!shouldWrite)
-			{
 				return true;
-			}
 
 			File.saveBytes(
 				outputPath,
@@ -467,8 +1011,10 @@ class StorageUtil
 		directory:String
 	):Void
 	{
-		if (directory == null
-			|| directory.length == 0)
+		if (
+			directory == null
+			|| directory.length == 0
+		)
 		{
 			return;
 		}
@@ -477,7 +1023,9 @@ class StorageUtil
 			return;
 
 		var parent:String =
-			Path.directory(directory);
+			Path.directory(
+				directory
+			);
 
 		if (
 			parent != directory
@@ -485,7 +1033,9 @@ class StorageUtil
 			&& !FileSystem.exists(parent)
 		)
 		{
-			ensureDirectory(parent);
+			ensureDirectory(
+				parent
+			);
 		}
 
 		if (!FileSystem.exists(directory))
