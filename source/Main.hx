@@ -20,9 +20,6 @@ import lime.system.System as LimeSystem;
 #if (linux || mac)
 import lime.graphics.Image;
 #end
-#if COPYSTATE_ALLOWED
-import states.CopyState;
-#end
 import backend.Highscore;
 
 // NATIVE API STUFF, YOU CAN IGNORE THIS AND SCROLL //
@@ -229,11 +226,6 @@ class Main extends Sprite
 			new FlxGame(
 				game.width,
 				game.height,
-				#if COPYSTATE_ALLOWED
-				!CopyState.checkExistingFiles()
-					? CopyState
-					:
-				#end
 				game.initialState,
 				game.framerate,
 				game.framerate,
