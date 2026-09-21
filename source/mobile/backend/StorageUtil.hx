@@ -2,14 +2,14 @@ package mobile.backend;
 
 import lime.system.System as LimeSystem;
 import haxe.io.Path;
-import haxe.Exception;
 import haxe.io.Bytes;
+import haxe.zip.Reader;
+import haxe.zip.Entry;
 import openfl.utils.Assets;
 
 #if sys
 import sys.FileSystem;
 import sys.io.File;
-import sys.io.Process;
 #end
 
 class StorageUtil
@@ -83,12 +83,12 @@ class StorageUtil
 				);
 			}
 		}
-		catch (e:Exception)
+		catch (e:Dynamic)
 		{
 			if (alert)
 			{
 				CoolUtil.showPopUp(
-					'$fileName couldn\'t be saved.\n(${e.message})',
+					'$fileName couldn\'t be saved.\n(${e})',
 					'Error!'
 				);
 			}
@@ -176,27 +176,6 @@ class StorageUtil
 		}
 	}
 
-	/**
-	 * Extracts the engine assets normally exposed by OpenFL
-	 * and, separately, extracts BFEXEOPT mods directly from
-	 * the installed APK.
-	 *
-	 * Expected MT Manager layout:
-	 *
-	 * APK
-	 * └── assets/
-	 *     └── BFEXEOPT/
-	 *         └── mods/
-	 *             └── TestMod/
-	 *
-	 * Result:
-	 *
-	 * /storage/emulated/0/.BFEXEOPT/
-	 * └── mods/
-	 *     └── TestMod/
-	 *
-	 * The mod extraction does NOT depend on Assets.list().
-	 */
 	public static function extractBundledFiles():Void
 	{
 		try
@@ -206,32 +185,14 @@ class StorageUtil
 					getStorageDirectory()
 				);
 
-			ensureDirectory(
-				storageDir
-			);
+			ensureDirectory(storageDir);
+			ensureDirectory(storageDir + 'assets/');
+			ensureDirectory(storageDir + 'mods/');
 
-			ensureDirectory(
-				storageDir + 'assets/'
-			);
-
-			ensureDirectory(
-				storageDir + 'mods/'
-			);
-
-			/*
-			 * -------------------------------------------------
-			 * 1. Extract normal OpenFL/Lime engine assets
-			 * -------------------------------------------------
-			 */
 			extractRegisteredAssets(
 				storageDir
 			);
 
-			/*
-			 * -------------------------------------------------
-			 * 2. Extract BFEXEOPT directly from APK
-			 * -------------------------------------------------
-			 */
 			extractModsFromAPK(
 				storageDir
 			);
@@ -245,12 +206,6 @@ class StorageUtil
 		}
 	}
 
-	/**
-	 * Extracts the normal assets registered by OpenFL.
-	 *
-	 * This part is intentionally kept separate from the
-	 * APK mod extraction.
-	 */
 	private static function extractRegisteredAssets(
 		storageDir:String
 	):Void
@@ -291,12 +246,6 @@ class StorageUtil
 				if (normalized.length == 0)
 					continue;
 
-				/*
-				 * Do not process BFEXEOPT here.
-				 *
-				 * Mods are handled directly from the APK
-				 * by extractModsFromAPK().
-				 */
 				if (
 					normalized == 'BFEXEOPT'
 					|| normalized.startsWith('BFEXEOPT/')
@@ -361,101 +310,70 @@ class StorageUtil
 		}
 	}
 
-	/**
-	 * Finds the installed APK path.
-	 *
-	 * Android's package manager returns something similar to:
-	 *
-	 * package:/data/app/....../base.apk
-	 */
 	private static function getInstalledAPKPath():String
 	{
 		try
 		{
-			var packageName:String =
+			#if android
+
+			var apkPath:String =
+				LimeSystem.applicationStorageDirectory;
+
+			var packageCodePath:Dynamic =
 				lime.app.Application.current.meta
-					.get('packageName');
+					.get('packageCodePath');
 
 			if (
-				packageName == null
-				|| packageName.length == 0
+				packageCodePath != null
+				&& Std.string(packageCodePath).length > 0
 			)
 			{
-				trace(
-					'[StorageUtil] Package name unavailable.'
-				);
+				var candidate:String =
+					Std.string(packageCodePath);
 
-				return '';
+				if (FileSystem.exists(candidate))
+					return candidate;
 			}
 
-			var process:Process =
-				new Process(
-					'pm path '
-					+ packageName
-				);
+			var apkMeta:Dynamic =
+				lime.app.Application.current.meta
+					.get('apkPath');
 
-			var output:String =
-				process.stdout
-					.readAll()
-					.toString();
-
-			process.close();
-
-			if (output == null)
-				return '';
-
-			for (line in output.split('\n'))
+			if (
+				apkMeta != null
+				&& Std.string(apkMeta).length > 0
+			)
 			{
-				var clean:String =
-					line.trim();
+				var candidate:String =
+					Std.string(apkMeta);
 
-				if (
-					clean.startsWith(
-						'package:'
-					)
-				)
-				{
-					var apkPath:String =
-						clean.substr(
-							'package:'.length
-						).trim();
-
-					if (
-						apkPath.length > 0
-						&& FileSystem.exists(apkPath)
-					)
-					{
-						return apkPath;
-					}
-				}
+				if (FileSystem.exists(candidate))
+					return candidate;
 			}
+
+			trace(
+				'[StorageUtil] APK path metadata unavailable.'
+			);
+
+			return '';
+
+			#else
+
+			return '';
+
+			#end
 		}
 		catch (e:Dynamic)
 		{
 			trace(
-				'[StorageUtil] Unable to find APK: '
+				'[StorageUtil] Unable to get APK path: '
 				+ e
 			);
-		}
 
-		return '';
+			return '';
+		}
 	}
 
-	/**
-	 * Extracts only BFEXEOPT content from the installed APK.
-	 *
-	 * MT Manager target:
-	 *
-	 * assets/BFEXEOPT/mods/
-	 *
-	 * Temporary extraction:
-	 *
-	 * .BFEXEOPT/.apk_extract/
-	 *
-	 * Then the contents of BFEXEOPT/mods are copied to:
-	 *
-	 * .BFEXEOPT/mods/
-	 */
 	private static function extractModsFromAPK(
 		storageDir:String
 	):Void
@@ -469,426 +387,226 @@ class StorageUtil
 		)
 		{
 			trace(
-				'[StorageUtil] Installed APK path not found.'
+				'[StorageUtil] Installed APK path not available.'
+			);
+
+			return;
+		}
+
+		if (!FileSystem.exists(apkPath))
+		{
+			trace(
+				'[StorageUtil] APK does not exist: '
+				+ apkPath
 			);
 
 			return;
 		}
 
 		trace(
-			'[StorageUtil] APK detected: '
+			'[StorageUtil] Reading APK ZIP: '
 			+ apkPath
 		);
 
-		var temporaryDir:String =
-			storageDir
-			+ '.apk_extract/';
+		var input:sys.io.FileInput = null;
 
 		try
 		{
-			/*
-			 * Remove an old temporary extraction.
-			 */
-			if (FileSystem.exists(temporaryDir))
+			input =
+				File.read(
+					apkPath,
+					true
+				);
+
+			var reader:Reader =
+				new Reader(input);
+
+			var entries:List<Entry> =
+				reader.read();
+
+			var prefix:String =
+				'assets/BFEXEOPT/mods/';
+
+			var found:Int = 0;
+			var extracted:Int = 0;
+			var failed:Int = 0;
+
+			for (entry in entries)
 			{
-				deleteDirectory(
-					temporaryDir
-				);
-			}
+				if (entry == null)
+					continue;
 
-			ensureDirectory(
-				temporaryDir
-			);
+				var entryName:String =
+					entry.fileName;
 
-			/*
-			 * Android APKs normally store application
-			 * assets under the APK "assets/" directory.
-			 *
-			 * We specifically extract BFEXEOPT only.
-			 */
-			var command:String =
-				'unzip -o '
-				+ shellQuote(apkPath)
-				+ ' "assets/BFEXEOPT/*"'
-				+ ' -d '
-				+ shellQuote(temporaryDir);
+				if (entryName == null)
+					continue;
 
-			trace(
-				'[StorageUtil] Extracting BFEXEOPT from APK...'
-			);
+				entryName =
+					entryName.split('\\').join('/');
 
-			var process:Process =
-				new Process(
-					command
-				);
+				if (!entryName.startsWith(prefix))
+					continue;
 
-			var stdout:String =
-				process.stdout
-					.readAll()
-					.toString();
+				if (entryName == prefix)
+					continue;
 
-			var stderr:String =
-				process.stderr
-					.readAll()
-					.toString();
+				if (entryName.endsWith('/'))
+					continue;
 
-			var exitCode:Int =
-				process.exitCode();
+				found++;
 
-			process.close();
-
-			if (stdout != null && stdout.length > 0)
-			{
-				trace(
-					'[StorageUtil] unzip: '
-					+ stdout
-				);
-			}
-
-			if (stderr != null && stderr.length > 0)
-			{
-				trace(
-					'[StorageUtil] unzip stderr: '
-					+ stderr
-				);
-			}
-
-			if (exitCode != 0)
-			{
-				trace(
-					'[StorageUtil] unzip failed with exit code '
-					+ exitCode
-				);
-
-				deleteDirectory(
-					temporaryDir
-				);
-
-				return;
-			}
-
-			/*
-			 * unzip produces:
-			 *
-			 * .apk_extract/assets/BFEXEOPT/
-			 */
-			var extractedRoot:String =
-				Path.addTrailingSlash(
-					temporaryDir
-					+ 'assets/BFEXEOPT'
-				);
-
-			if (!FileSystem.exists(extractedRoot))
-			{
-				trace(
-					'[StorageUtil] BFEXEOPT was not found '
-					+ 'inside the APK.'
-				);
-
-				deleteDirectory(
-					temporaryDir
-				);
-
-				return;
-			}
-
-			/*
-			 * We only need the mods directory.
-			 */
-			var extractedMods:String =
-				Path.addTrailingSlash(
-					extractedRoot
-					+ 'mods'
-				);
-
-			if (!FileSystem.exists(extractedMods))
-			{
-				trace(
-					'[StorageUtil] No mods directory found '
-					+ 'inside APK.'
-				);
-
-				deleteDirectory(
-					temporaryDir
-				);
-
-				return;
-			}
-
-			var destinationMods:String =
-				Path.addTrailingSlash(
-					storageDir
-					+ 'mods'
-				);
-
-			ensureDirectory(
-				destinationMods
-			);
-
-			copyDirectoryContents(
-				extractedMods,
-				destinationMods
-			);
-
-			trace(
-				'[StorageUtil] APK mod extraction complete.'
-			);
-
-			/*
-			 * Temporary files are no longer needed.
-			 */
-			deleteDirectory(
-				temporaryDir
-			);
-		}
-		catch (e:Dynamic)
-		{
-			trace(
-				'[StorageUtil] APK mod extraction failed: '
-				+ e
-			);
-
-			try
-			{
-				if (FileSystem.exists(temporaryDir))
-				{
-					deleteDirectory(
-						temporaryDir
+				var relativePath:String =
+					entryName.substr(
+						prefix.length
 					);
+
+				if (relativePath.length == 0)
+					continue;
+
+				if (
+					relativePath.startsWith('../')
+					|| relativePath.contains('/../')
+					|| relativePath == '..'
+				)
+				{
+					trace(
+						'[StorageUtil] Ignoring unsafe APK path: '
+						+ entryName
+					);
+
+					continue;
 				}
-			}
-			catch (_:Dynamic)
-			{
-			}
-		}
-	}
 
-	/**
-	 * Copies a directory recursively.
-	 */
-	private static function copyDirectoryContents(
-		sourceDirectory:String,
-		destinationDirectory:String
-	):Void
-	{
-		sourceDirectory =
-			Path.addTrailingSlash(
-				sourceDirectory
-			);
+				var outputPath:String =
+					Path.addTrailingSlash(
+						storageDir + 'mods'
+					)
+					+ relativePath;
 
-		destinationDirectory =
-			Path.addTrailingSlash(
-				destinationDirectory
-			);
-
-		ensureDirectory(
-			destinationDirectory
-		);
-
-		for (
-			entry in FileSystem.readDirectory(
-				sourceDirectory
-			)
-		)
-		{
-			var sourcePath:String =
-				sourceDirectory + entry;
-
-			var destinationPath:String =
-				destinationDirectory + entry;
-
-			if (
-				FileSystem.isDirectory(
-					sourcePath
-				)
-			)
-			{
-				copyDirectoryContents(
-					sourcePath,
-					destinationPath
-				);
-			}
-			else
-			{
-				copyFileIfNeeded(
-					sourcePath,
-					destinationPath
-				);
-			}
-		}
-	}
-
-	/**
-	 * Copies one file only when necessary.
-	 */
-	private static function copyFileIfNeeded(
-		sourcePath:String,
-		destinationPath:String
-	):Void
-	{
-		try
-		{
-			var sourceBytes:Bytes =
-				File.getBytes(
-					sourcePath
-				);
-
-			var shouldWrite:Bool = true;
-
-			if (
-				FileSystem.exists(
-					destinationPath
-				)
-			)
-			{
 				try
 				{
-					var existingBytes:Bytes =
-						File.getBytes(
-							destinationPath
+					var bytes:Bytes =
+						Reader.unzip(entry);
+
+					if (bytes == null)
+					{
+						failed++;
+
+						trace(
+							'[StorageUtil] Failed to unzip: '
+							+ entryName
 						);
 
+						continue;
+					}
+
+					var outputDirectory:String =
+						Path.directory(
+							outputPath
+						);
+
+					ensureDirectory(
+						outputDirectory
+					);
+
+					var shouldWrite:Bool = true;
+
 					if (
-						existingBytes.length
-						== sourceBytes.length
-						&& existingBytes.compare(
-							sourceBytes
-						) == 0
+						FileSystem.exists(
+							outputPath
+						)
 					)
 					{
-						shouldWrite = false;
+						try
+						{
+							var existingBytes:Bytes =
+								File.getBytes(
+									outputPath
+								);
+
+							if (
+								existingBytes.length
+								== bytes.length
+								&& existingBytes.compare(
+									bytes
+								) == 0
+							)
+							{
+								shouldWrite = false;
+							}
+						}
+						catch (e:Dynamic)
+						{
+							shouldWrite = true;
+						}
+					}
+
+					if (shouldWrite)
+					{
+						File.saveBytes(
+							outputPath,
+							bytes
+						);
+
+						extracted++;
+
+						trace(
+							'[StorageUtil] APK mod: '
+							+ entryName
+							+ ' -> '
+							+ outputPath
+						);
+					}
+					else
+					{
+						extracted++;
 					}
 				}
 				catch (e:Dynamic)
 				{
-					shouldWrite = true;
+					failed++;
+
+					trace(
+						'[StorageUtil] Failed to extract APK entry: '
+						+ entryName
+						+ ' (' + e + ')'
+					);
 				}
 			}
 
-			if (!shouldWrite)
-				return;
-
-			var outputDirectory:String =
-				Path.directory(
-					destinationPath
-				);
-
-			ensureDirectory(
-				outputDirectory
-			);
-
-			File.saveBytes(
-				destinationPath,
-				sourceBytes
-			);
-
 			trace(
-				'[StorageUtil] Mod file: '
-				+ sourcePath
-				+ ' -> '
-				+ destinationPath
+				'[StorageUtil] APK mod extraction complete.'
+				+ ' Found: '
+				+ found
+				+ ' | Extracted/updated: '
+				+ extracted
+				+ ' | Failed: '
+				+ failed
 			);
 		}
 		catch (e:Dynamic)
 		{
 			trace(
-				'[StorageUtil] Failed to copy file: '
-				+ sourcePath
-				+ ' (' + e + ')'
+				'[StorageUtil] APK ZIP reading failed: '
+				+ e
 			);
 		}
-	}
-
-	/**
-	 * Deletes a directory recursively.
-	 */
-	private static function deleteDirectory(
-		directory:String
-	):Void
-	{
-		if (
-			directory == null
-			|| !FileSystem.exists(directory)
-		)
+		finally
 		{
-			return;
-		}
-
-		if (!FileSystem.isDirectory(directory))
-		{
-			try
-			{
-				FileSystem.deleteFile(
-					directory
-				);
-			}
-			catch (_:Dynamic)
-			{
-			}
-
-			return;
-		}
-
-		for (
-			entry in FileSystem.readDirectory(
-				directory
-			)
-		)
-		{
-			var path:String =
-				Path.addTrailingSlash(
-					directory
-				) + entry;
-
-			if (FileSystem.isDirectory(path))
-			{
-				deleteDirectory(
-					path
-				);
-			}
-			else
+			if (input != null)
 			{
 				try
 				{
-					FileSystem.deleteFile(
-						path
-					);
+					input.close();
 				}
 				catch (_:Dynamic)
 				{
 				}
 			}
 		}
-
-		try
-		{
-			FileSystem.deleteDirectory(
-				directory
-			);
-		}
-		catch (_:Dynamic)
-		{
-		}
 	}
 
-	/**
-	 * Quotes a path for the Android shell.
-	 */
-	private static function shellQuote(
-		value:String
-	):String
-	{
-		if (value == null)
-			return "''";
-
-		return "'"
-			+ value.split("'").join("'\\''")
-			+ "'";
-	}
-
-	/**
-	 * Extracts one OpenFL asset.
-	 */
 	private static function extractSingleAsset(
 		assetPath:String,
 		normalized:String,
@@ -982,9 +700,6 @@ class StorageUtil
 		}
 	}
 
-	/**
-	 * Normalizes asset paths returned by OpenFL.
-	 */
 	private static function normalizeAssetPath(
 		assetPath:String
 	):String
@@ -1051,42 +766,6 @@ class StorageUtil
 	):Array<String>
 	{
 		var paths:Array<String> = [];
-
-		try
-		{
-			var process =
-				new Process(
-					'grep -o "/storage/....-...." /proc/mounts | sort -u'
-				);
-
-			var output:String =
-				process.stdout
-					.readAll()
-					.toString();
-
-			process.close();
-
-			paths =
-				output
-					.split('\n')
-					.filter(
-						p -> p.trim().length > 0
-					);
-
-			if (splitStorage)
-			{
-				paths =
-					paths.map(
-						p -> p.replace(
-							'/storage/',
-							''
-						)
-					);
-			}
-		}
-		catch (e:Exception)
-		{
-		}
 
 		return paths;
 	}
