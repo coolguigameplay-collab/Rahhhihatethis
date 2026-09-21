@@ -68,25 +68,22 @@ class FPSCounter extends TextField
 		updateTime = prevTime + 500;
 	}
 
-
 	public dynamic function updateText():Void // so people can override it in hscript
 	{
-		text = 
-	public dynamic function updateText():Void
-{
-	text =
-		'FPS: $currentFPS' +
-		'\nMemory: ${flixel.util.FlxStringUtil.formatBytes(memoryMegas)}' +
-		os +
-		'\nENGINE CREATED BY BFEXEOPT';
+		text =
+			'FPS: $currentFPS' +
+			'\nMemory: ${flixel.util.FlxStringUtil.formatBytes(memoryMegas)}' +
+			os +
+			'\nENGINE CREATED BY BFEXEOPT';
 
-	textColor = 0xFFFFFFFF;
+		textColor = 0xFFFFFFFF;
 
-	if (currentFPS < FlxG.stage.window.frameRate * 0.5)
-		textColor = 0xFFFF0000;
-}
+		if (currentFPS < FlxG.stage.window.frameRate * 0.5)
+			textColor = 0xFFFF0000;
+	}
 
 	var deltaTimeout:Float = 0.0;
+
 	private override function __enterFrame(deltaTime:Float):Void
 	{
 		if (ClientPrefs.data.fpsRework)
@@ -120,8 +117,10 @@ class FPSCounter extends TextField
 		{
 			final now:Float = haxe.Timer.stamp() * 1000;
 			times.push(now);
+
 			while (times[0] < now - 1000)
 				times.shift();
+
 			// prevents the overlay from updating every frame, why would you need to anyways @crowplexus
 			if (deltaTimeout < 50)
 			{
@@ -139,7 +138,8 @@ class FPSCounter extends TextField
 	inline function get_memoryMegas():Float
 		return cpp.vm.Gc.memInfo64(cpp.vm.Gc.MEM_INFO_USAGE);
 
-	public inline function positionFPS(X:Float, Y:Float, ?scale:Float = 1){
+	public inline function positionFPS(X:Float, Y:Float, ?scale:Float = 1)
+	{
 		scaleX = scaleY = #if android (scale > 1 ? scale : 1) #else (scale < 1 ? scale : 1) #end;
 		x = FlxG.game.x + X;
 		y = FlxG.game.y + Y;
@@ -180,6 +180,7 @@ class FPSCounter extends TextField
 		return ::String(osInfo.machine);
 	')
 	#end
+
 	@:noCompletion
 	private function getArch():String
 	{
