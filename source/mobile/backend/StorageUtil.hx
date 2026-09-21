@@ -3,8 +3,6 @@ package mobile.backend;
 import lime.system.System as LimeSystem;
 import haxe.io.Path;
 import haxe.io.Bytes;
-import haxe.zip.Reader;
-import haxe.zip.Entry;
 import openfl.utils.Assets;
 
 #if sys
@@ -176,6 +174,24 @@ class StorageUtil
 		}
 	}
 
+	/**
+	 * Extract all bundled engine assets and bundled mods.
+	 *
+	 * Bundled mod structure inside the APK:
+	 *
+	 * BFEXEOPT/
+	 * └── mods/
+	 *     └── NamaMod/
+	 *         └── ...
+	 *
+	 * Extracted structure:
+	 *
+	 * /storage/emulated/0/.BFEXEOPT/
+	 * ├── assets/
+	 * └── mods/
+	 *     └── NamaMod/
+	 *         └── ...
+	 */
 	public static function extractBundledFiles():Void
 	{
 		try
@@ -192,10 +208,6 @@ class StorageUtil
 			extractRegisteredAssets(
 				storageDir
 			);
-
-			extractModsFromAPK(
-				storageDir
-			);
 		}
 		catch (e:Dynamic)
 		{
@@ -206,6 +218,21 @@ class StorageUtil
 		}
 	}
 
+	/**
+	 * Extract registered OpenFL assets.
+	 *
+	 * Normal engine assets:
+	 *
+	 * assets/foo/bar.png
+	 *       ↓
+	 * .BFEXEOPT/assets/foo/bar.png
+	 *
+	 * Bundled mods:
+	 *
+	 * BFEXEOPT/mods/NamaMod/file.ext
+	 *       ↓
+	 * .BFEXEOPT/mods/NamaMod/file.ext
+	 */
 	private static function extractRegisteredAssets(
 		storageDir:String
 	):Void
@@ -226,6 +253,7 @@ class StorageUtil
 
 			var extracted:Int = 0;
 			var failed:Int = 0;
+			var bundledMods:Int = 0;
 
 			trace(
 				'[StorageUtil] Found '
@@ -246,14 +274,83 @@ class StorageUtil
 				if (normalized.length == 0)
 					continue;
 
+				/*
+				 * -------------------------------------------------
+				 * BUNDLED MODS
+				 * -------------------------------------------------
+				 *
+				 * Example:
+				 *
+				 * BFEXEOPT/mods/NamaMod/TEST.txt
+				 *
+				 * becomes:
+				 *
+				 * .BFEXEOPT/mods/NamaMod/TEST.txt
+				 */
+				if (
+					normalized.startsWith(
+						'BFEXEOPT/mods/'
+					)
+				)
+				{
+					var relativeModPath:String =
+						normalized.substr(
+							'BFEXEOPT/mods/'.length
+						);
+
+					if (relativeModPath.length == 0)
+						continue;
+
+					var outputModPath:String =
+						storageDir
+						+ 'mods/'
+						+ relativeModPath;
+
+					if (
+						extractSingleAsset(
+							assetPath,
+							normalized,
+							outputModPath
+						)
+					)
+					{
+						extracted++;
+						bundledMods++;
+					}
+					else
+					{
+						failed++;
+					}
+
+					continue;
+				}
+
+				/*
+				 * -------------------------------------------------
+				 * IGNORE OTHER BFEXEOPT FILES
+				 * -------------------------------------------------
+				 *
+				 * We only want:
+				 *
+				 * BFEXEOPT/mods/
+				 *
+				 * Everything else inside BFEXEOPT is ignored here.
+				 */
 				if (
 					normalized == 'BFEXEOPT'
-					|| normalized.startsWith('BFEXEOPT/')
+					|| normalized.startsWith(
+						'BFEXEOPT/'
+					)
 				)
 				{
 					continue;
 				}
 
+				/*
+				 * -------------------------------------------------
+				 * NORMAL ENGINE ASSETS
+				 * -------------------------------------------------
+				 */
 				var relativeAssetPath:String =
 					normalized;
 
@@ -294,9 +391,11 @@ class StorageUtil
 			}
 
 			trace(
-				'[StorageUtil] Engine asset extraction complete.'
+				'[StorageUtil] Asset extraction complete.'
 				+ ' Extracted/updated: '
 				+ extracted
+				+ ' | Bundled mods: '
+				+ bundledMods
 				+ ' | Failed: '
 				+ failed
 			);
@@ -304,308 +403,15 @@ class StorageUtil
 		catch (e:Dynamic)
 		{
 			trace(
-				'[StorageUtil] Engine asset extraction failed: '
+				'[StorageUtil] Asset extraction failed: '
 				+ e
 			);
 		}
 	}
 
-	private static function getInstalledAPKPath():String
-	{
-		try
-		{
-			#if android
-
-			var packageCodePath:Dynamic =
-				lime.app.Application.current.meta
-					.get('packageCodePath');
-
-			if (
-				packageCodePath != null
-				&& Std.string(packageCodePath).length > 0
-			)
-			{
-				var candidate:String =
-					Std.string(packageCodePath);
-
-				if (FileSystem.exists(candidate))
-					return candidate;
-			}
-
-			var apkMeta:Dynamic =
-				lime.app.Application.current.meta
-					.get('apkPath');
-
-			if (
-				apkMeta != null
-				&& Std.string(apkMeta).length > 0
-			)
-			{
-				var candidate:String =
-					Std.string(apkMeta);
-
-				if (FileSystem.exists(candidate))
-					return candidate;
-			}
-
-			trace(
-				'[StorageUtil] APK path metadata unavailable.'
-			);
-
-			return '';
-
-			#else
-
-			return '';
-
-			#end
-		}
-		catch (e:Dynamic)
-		{
-			trace(
-				'[StorageUtil] Unable to get APK path: '
-				+ e
-			);
-
-			return '';
-		}
-	}
-
-	private static function extractModsFromAPK(
-		storageDir:String
-	):Void
-	{
-		var apkPath:String =
-			getInstalledAPKPath();
-
-		if (
-			apkPath == null
-			|| apkPath.length == 0
-		)
-		{
-			trace(
-				'[StorageUtil] Installed APK path not available.'
-			);
-
-			return;
-		}
-
-		if (!FileSystem.exists(apkPath))
-		{
-			trace(
-				'[StorageUtil] APK does not exist: '
-				+ apkPath
-			);
-
-			return;
-		}
-
-		trace(
-			'[StorageUtil] Reading APK ZIP: '
-			+ apkPath
-		);
-
-		var input:sys.io.FileInput = null;
-
-		try
-		{
-			input =
-				File.read(
-					apkPath,
-					true
-				);
-
-			var reader:Reader =
-				new Reader(input);
-
-			var entries:List<Entry> =
-				reader.read();
-
-			// IMPORTANT:
-			// The APK contains BFEXEOPT directly at the APK root.
-			// Example:
-			// BFEXEOPT/mods/NamaMod/TEST.txt
-			var prefix:String =
-				'BFEXEOPT/mods/';
-
-			var found:Int = 0;
-			var extracted:Int = 0;
-			var failed:Int = 0;
-
-			for (entry in entries)
-			{
-				if (entry == null)
-					continue;
-
-				var entryName:String =
-					entry.fileName;
-
-				if (entryName == null)
-					continue;
-
-				entryName =
-					entryName.split('\\').join('/');
-
-				if (!entryName.startsWith(prefix))
-					continue;
-
-				if (entryName == prefix)
-					continue;
-
-				if (entryName.endsWith('/'))
-					continue;
-
-				found++;
-
-				var relativePath:String =
-					entryName.substr(
-						prefix.length
-					);
-
-				if (relativePath.length == 0)
-					continue;
-
-				if (
-					relativePath.startsWith('../')
-					|| relativePath.contains('/../')
-					|| relativePath == '..'
-				)
-				{
-					trace(
-						'[StorageUtil] Ignoring unsafe APK path: '
-						+ entryName
-					);
-
-					continue;
-				}
-
-				var outputPath:String =
-					Path.addTrailingSlash(
-						storageDir + 'mods'
-					)
-					+ relativePath;
-
-				try
-				{
-					var bytes:Bytes =
-						Reader.unzip(entry);
-
-					if (bytes == null)
-					{
-						failed++;
-
-						trace(
-							'[StorageUtil] Failed to unzip: '
-							+ entryName
-						);
-
-						continue;
-					}
-
-					var outputDirectory:String =
-						Path.directory(
-							outputPath
-						);
-
-					ensureDirectory(
-						outputDirectory
-					);
-
-					var shouldWrite:Bool = true;
-
-					if (
-						FileSystem.exists(
-							outputPath
-						)
-					)
-					{
-						try
-						{
-							var existingBytes:Bytes =
-								File.getBytes(
-									outputPath
-								);
-
-							if (
-								existingBytes.length
-								== bytes.length
-								&& existingBytes.compare(
-									bytes
-								) == 0
-							)
-							{
-								shouldWrite = false;
-							}
-						}
-						catch (e:Dynamic)
-						{
-							shouldWrite = true;
-						}
-					}
-
-					if (shouldWrite)
-					{
-						File.saveBytes(
-							outputPath,
-							bytes
-						);
-
-						extracted++;
-
-						trace(
-							'[StorageUtil] APK mod: '
-							+ entryName
-							+ ' -> '
-							+ outputPath
-						);
-					}
-					else
-					{
-						extracted++;
-					}
-				}
-				catch (e:Dynamic)
-				{
-					failed++;
-
-					trace(
-						'[StorageUtil] Failed to extract APK entry: '
-						+ entryName
-						+ ' (' + e + ')'
-					);
-				}
-			}
-
-			trace(
-				'[StorageUtil] APK mod extraction complete.'
-				+ ' Found: '
-				+ found
-				+ ' | Extracted/updated: '
-				+ extracted
-				+ ' | Failed: '
-				+ failed
-			);
-		}
-		catch (e:Dynamic)
-		{
-			trace(
-				'[StorageUtil] APK ZIP reading failed: '
-				+ e
-			);
-		}
-
-		if (input != null)
-		{
-			try
-			{
-				input.close();
-			}
-			catch (e:Dynamic)
-			{
-			}
-		}
-	}
-
+	/**
+	 * Reads an OpenFL asset as bytes and writes it to external storage.
+	 */
 	private static function extractSingleAsset(
 		assetPath:String,
 		normalized:String,
@@ -640,6 +446,9 @@ class StorageUtil
 
 			var shouldWrite:Bool = true;
 
+			/*
+			 * Avoid rewriting files that are already identical.
+			 */
 			if (
 				FileSystem.exists(
 					outputPath
@@ -671,7 +480,14 @@ class StorageUtil
 			}
 
 			if (!shouldWrite)
+			{
+				trace(
+					'[StorageUtil] Already up to date: '
+					+ normalized
+				);
+
 				return true;
+			}
 
 			File.saveBytes(
 				outputPath,
@@ -699,6 +515,9 @@ class StorageUtil
 		}
 	}
 
+	/**
+	 * Normalize an asset path so all paths use '/'.
+	 */
 	private static function normalizeAssetPath(
 		assetPath:String
 	):String
@@ -721,6 +540,9 @@ class StorageUtil
 		return normalized;
 	}
 
+	/**
+	 * Recursively creates a directory and its parents.
+	 */
 	private static function ensureDirectory(
 		directory:String
 	):Void
